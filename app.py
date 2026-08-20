@@ -1,21 +1,17 @@
 import streamlit as st
 import pandas as pd
-
 from procesamiento import (
     cargar_excel,
     preparar_anio,
     preparar_valor
 )
-
 from analisis_clientes import (
     clientes_inactivos_2026,
     productos_clientes_inactivos
 )
-
 from recomendador import (
     recomendar_productos
 )
-
 from alimentacion_animal import (
     ranking_clientes_animal,
     productos_animal_por_cliente
