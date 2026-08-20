@@ -45,12 +45,16 @@ def cargar_excel(archivo):
 def detectar_columna_anio(df):
 
     posibles = [
-        "AÑO",
-        "ANO",
-        "YEAR",
-        "FECHA",
-        "DATE"
-    ]
+    "TOTAL LINEA",
+    "VALOR",
+    "VENTAS",
+    "VENTA",
+    "TOTAL",
+    "VALOR VENTA",
+    "VALOR DE VENTA",
+    "NETO",
+    "IMPORTE"
+]
 
     for columna in posibles:
         if columna in df.columns:
