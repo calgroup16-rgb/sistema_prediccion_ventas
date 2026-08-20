@@ -131,7 +131,3 @@ def preparar_valor(df):
     ).fillna(0)
 
     return df
-        errors="coerce"
-    ).fillna(0)
-
-    return df
