@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-1
+
 
 def cargar_excel(archivo):
     df = pd.read_excel(archivo)
