@@ -45,16 +45,12 @@ def cargar_excel(archivo):
 def detectar_columna_anio(df):
 
     posibles = [
-    "TOTAL LINEA",
-    "VALOR",
-    "VENTAS",
-    "VENTA",
-    "TOTAL",
-    "VALOR VENTA",
-    "VALOR DE VENTA",
-    "NETO",
-    "IMPORTE"
-]
+        "AÑO",
+        "ANO",
+        "YEAR",
+        "FECHA",
+        "DATE"
+    ]
 
     for columna in posibles:
         if columna in df.columns:
@@ -94,6 +90,7 @@ def preparar_anio(df):
 def detectar_columna_valor(df):
 
     posibles = [
+        "TOTAL LINEA",
         "VALOR",
         "VENTAS",
         "VENTA",
@@ -130,6 +127,10 @@ def preparar_valor(df):
 
     df["VALOR_VENTA"] = pd.to_numeric(
         df["VALOR_VENTA"],
+        errors="coerce"
+    ).fillna(0)
+
+    return df
         errors="coerce"
     ).fillna(0)
 
