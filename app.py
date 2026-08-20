@@ -6,7 +6,7 @@ from procesamiento import (
     preparar_anio,
     preparar_valor
 )
-
+1
 from analisis_clientes import (
     clientes_inactivos_2026,
     productos_clientes_inactivos
