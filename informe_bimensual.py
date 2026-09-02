@@ -17,6 +17,7 @@ MAPA_BIMESTRES = {
 }
 
 def generar_grafica_comparativa(labels, valores_totales):
+    """Genera la imagen de la gráfica de barras para inyectar en Word."""
     fig, ax = plt.subplots(figsize=(6.5, 3.5))
     colores = ['#1f77b4', '#ff7f0e', '#2ca02c']
     
@@ -43,7 +44,8 @@ def generar_grafica_comparativa(labels, valores_totales):
     return img_buf
 
 
-def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, df_p2, df_p3, col_prov, nom_b_act, nom_b_prev, anio_actual):
+def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, col_val, col_cli, nom_b_act, nom_b_prev, anio_actual):
+    """Genera el texto de análisis ejecutivo y los aspectos por mejorar dinámicos."""
     var_vs_anio = ((v_act - v_p2) / v_p2 * 100) if v_p2 > 0 else 0
     var_vs_bim = ((v_act - v_p3) / v_p3 * 100) if v_p3 > 0 else 0
 
@@ -58,8 +60,10 @@ def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, df_p2, df_p3, col_prov
         f"{tend_bim} del {abs(var_vs_bim):.2f}% respecto a los ${v_p3:,.2f} facturados previamente."
     )
 
-    col_val = "VALOR_VENTA" if "VALOR_VENTA" in df_p1.columns else "VALOR"
-    top_clis = df_p1.groupby("CLIENTE")[col_val].sum().sort_values(ascending=False).index.tolist()
+    top_clis = []
+    if col_cli in df_p1.columns and not df_p1.empty:
+        top_clis = df_p1.groupby(col_cli)[col_val].sum().sort_values(ascending=False).index.tolist()
+
     cli_1 = str(top_clis[0]) if len(top_clis) > 0 else "cuentas principales"
     cli_2 = str(top_clis[1]) if len(top_clis) > 1 else "cuentas secundarias"
     cli_3 = str(top_clis[2]) if len(top_clis) > 2 else "otros clientes estratégicos"
@@ -118,12 +122,18 @@ def render_modulo_informe(df_global):
     st.subheader("Configuración del Informe")
     col1, col2, col3 = st.columns(3)
 
+    # Detección automática de columnas
+    col_vend = "VENDEDOR" if "VENDEDOR" in df_global.columns else df_global.columns[0]
+    col_val = "VALOR_VENTA" if "VALOR_VENTA" in df_global.columns else ("VALOR" if "VALOR" in df_global.columns else df_global.columns[-1])
+    col_prov = "PROVEEDOR" if "PROVEEDOR" in df_global.columns else ("FABRICANTE" if "FABRICANTE" in df_global.columns else "PROVEEDOR")
+    col_cli = "CLIENTE" if "CLIENTE" in df_global.columns else "CLIENTE"
+
     with col1:
-        vendedor_sel = st.selectbox("Seleccione el Vendedor/Responsable:", sorted(df_global["VENDEDOR"].dropna().unique()))
+        vendedor_sel = st.selectbox("Seleccione el Vendedor/Responsable:", sorted(df_global[col_vend].dropna().unique()))
     with col2:
         bim_sel = st.selectbox("Seleccione el Bimestre del Informe:", list(MAPA_BIMESTRES.keys()), format_func=lambda x: MAPA_BIMESTRES[x]["nombre"])
     with col3:
-        anios_disponibles = sorted(df_global["AÑO"].dropna().unique(), reverse=True)
+        anios_disponibles = sorted(df_global["AÑO"].dropna().unique(), reverse=True) if "AÑO" in df_global.columns else [2026]
         anio_sel = st.selectbox("Seleccione el Año Actual:", anios_disponibles)
 
     if st.button("🚀 Generar Informe Bimensual"):
@@ -131,7 +141,7 @@ def render_modulo_informe(df_global):
         nom_b_act = cfg_b["nombre"]
         nom_b_prev = MAPA_BIMESTRES[cfg_b["previo"]]["nombre"]
 
-        df_vend = df_global[df_global["VENDEDOR"] == vendedor_sel]
+        df_vend = df_global[df_global[col_vend] == vendedor_sel]
         
         df_p1 = df_vend[(df_vend["AÑO"] == anio_sel) & (df_vend["MES"].isin(cfg_b["meses"]))]
         df_p2 = df_vend[(df_vend["AÑO"] == (anio_sel - 1)) & (df_vend["MES"].isin(cfg_b["meses"]))]
@@ -139,19 +149,21 @@ def render_modulo_informe(df_global):
         anio_p3 = anio_sel if bim_sel != "B1" else (anio_sel - 1)
         df_p3 = df_vend[(df_vend["AÑO"] == anio_p3) & (df_vend["MES"].isin(cfg_b["meses_prev"]))]
 
-        col_val = "VALOR_VENTA" if "VALOR_VENTA" in df_global.columns else "VALOR"
         v_act = float(df_p1[col_val].sum()) if not df_p1.empty else 0.0
         v_p2 = float(df_p2[col_val].sum()) if not df_p2.empty else 0.0
         v_p3 = float(df_p3[col_val].sum()) if not df_p3.empty else 0.0
 
-        col_prov = "PROVEEDOR" if "PROVEEDOR" in df_global.columns else "FABRICANTE"
+        # Tabla de Proveedores / Fabricantes
+        provs = set()
+        for df_tmp in [df_p1, df_p2, df_p3]:
+            if col_prov in df_tmp.columns:
+                provs.update(df_tmp[col_prov].dropna().unique())
 
-        provs = set(df_p1[col_prov].dropna()).union(df_p2[col_prov].dropna()).union(df_p3[col_prov].dropna())
         tabla_provs = []
         for p in provs:
-            va = float(df_p1[df_p1[col_prov] == p][col_val].sum()) if not df_p1.empty else 0.0
-            vp2 = float(df_p2[df_p2[col_prov] == p][col_val].sum()) if not df_p2.empty else 0.0
-            vp3 = float(df_p3[df_p3[col_prov] == p][col_val].sum()) if not df_p3.empty else 0.0
+            va = float(df_p1[df_p1[col_prov] == p][col_val].sum()) if col_prov in df_p1.columns and not df_p1.empty else 0.0
+            vp2 = float(df_p2[df_p2[col_prov] == p][col_val].sum()) if col_prov in df_p2.columns and not df_p2.empty else 0.0
+            vp3 = float(df_p3[df_p3[col_prov] == p][col_val].sum()) if col_prov in df_p3.columns and not df_p3.empty else 0.0
             tabla_provs.append({
                 "PROVEEDOR": str(p),
                 "v_act": f"${va:,.2f}",
@@ -161,12 +173,17 @@ def render_modulo_informe(df_global):
             })
         tabla_provs = sorted(tabla_provs, key=lambda x: x["raw_val"], reverse=True)
 
-        clis = set(df_p1["CLIENTE"].dropna()).union(df_p2["CLIENTE"].dropna()).union(df_p3["CLIENTE"].dropna())
+        # Tabla de Clientes
+        clis = set()
+        for df_tmp in [df_p1, df_p2, df_p3]:
+            if col_cli in df_tmp.columns:
+                clis.update(df_tmp[col_cli].dropna().unique())
+
         tabla_clis = []
         for c in clis:
-            va = float(df_p1[df_p1["CLIENTE"] == c][col_val].sum()) if not df_p1.empty else 0.0
-            vp2 = float(df_p2[df_p2["CLIENTE"] == c][col_val].sum()) if not df_p2.empty else 0.0
-            vp3 = float(df_p3[df_p3["CLIENTE"] == c][col_val].sum()) if not df_p3.empty else 0.0
+            va = float(df_p1[df_p1[col_cli] == c][col_val].sum()) if col_cli in df_p1.columns and not df_p1.empty else 0.0
+            vp2 = float(df_p2[df_p2[col_cli] == c][col_val].sum()) if col_cli in df_p2.columns and not df_p2.empty else 0.0
+            vp3 = float(df_p3[df_p3[col_cli] == c][col_val].sum()) if col_cli in df_p3.columns and not df_p3.empty else 0.0
             tabla_clis.append({
                 "CLIENTE": str(c),
                 "v_act": f"${va:,.2f}",
@@ -186,7 +203,7 @@ def render_modulo_informe(df_global):
         )
 
         txt_analisis, aspectos_lista, txt_cierre = generar_analisis_y_aspectos(
-            v_act, v_p2, v_p3, df_p1, df_p2, df_p3, col_prov, nom_b_act, nom_b_prev, anio_sel
+            v_act, v_p2, v_p3, df_p1, col_val, col_cli, nom_b_act, nom_b_prev, anio_sel
         )
 
         path_template = "templates/BIMENSUAL MAY-JUN.docx"
@@ -216,10 +233,8 @@ def render_modulo_informe(df_global):
             "grafica_ventas": InlineImage(doc, buf_grafica, width=Inches(6.0))
         }
 
-        # Renderizado seguro con Jinja2
         try:
-            jinja_env = jinja2.Environment(autoescape=False)
-            doc.render(contexto, jinja_env)
+            doc.render(contexto)
             
             output_buf = io.BytesIO()
             doc.save(output_buf)
