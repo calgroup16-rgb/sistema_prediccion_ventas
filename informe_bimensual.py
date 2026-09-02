@@ -6,20 +6,34 @@ import streamlit as st
 from docxtpl import DocxTemplate, InlineImage
 from docx.shared import Inches
 
-def generar_grafica_comparativa(labels, valores_cliente, valores_proveedor):
-    """Genera una gráfica de barras comparativa en memoria para el Word."""
-    fig, ax = plt.subplots(figsize=(6.5, 3.8))
-    x = range(len(labels))
-    width = 0.35
+# Diccionario oficial de Bimestres (B1 a B6)
+MAPA_BIMESTRES = {
+    "B1": {"nombre": "B1 (Ene - Feb)", "meses": [1, 2], "previo": "B6", "meses_prev": [11, 12]},
+    "B2": {"nombre": "B2 (Mar - Abr)", "meses": [3, 4], "previo": "B1", "meses_prev": [1, 2]},
+    "B3": {"nombre": "B3 (May - Jun)", "meses": [5, 6], "previo": "B2", "meses_prev": [3, 4]},
+    "B4": {"nombre": "B4 (Jul - Ago)", "meses": [7, 8], "previo": "B3", "meses_prev": [5, 6]},
+    "B5": {"nombre": "B5 (Sep - Oct)", "meses": [9, 10], "previo": "B4", "meses_prev": [7, 8]},
+    "B6": {"nombre": "B6 (Nov - Dic)", "meses": [11, 12], "previo": "B5", "meses_prev": [9, 10]},
+}
 
-    ax.bar([p - width/2 for p in x], valores_cliente, width, label='Clientes Seleccionados', color='#1f77b4')
-    ax.bar([p + width/2 for p in x], valores_proveedor, width, label='Ventas de Proveedores (FABRICANTE)', color='#ff7f0e')
+def generar_grafica_comparativa(labels, valores_totales):
+    """Genera una gráfica de barras de los totales acumulados para el informe."""
+    fig, ax = plt.subplots(figsize=(6.5, 3.5))
+    colores = ['#1f77b4', '#ff7f0e', '#2ca02c']
+    
+    bars = ax.bar(labels, valores_totales, color=colores, width=0.5)
+    ax.set_ylabel('Ventas ($)', fontsize=10)
+    ax.set_title('Comparativo de Ventas Totales por Período', fontsize=12, fontweight='bold')
+    
+    # Formato de moneda en las barras
+    for bar in bars:
+        height = bar.get_height()
+        ax.annotate(f'${height:,.0f}',
+                    xy=(bar.get_x() + bar.get_width() / 2, height),
+                    xytext=(0, 3),  
+                    textcoords="offset points",
+                    ha='center', va='bottom', fontsize=9, fontweight='bold')
 
-    ax.set_ylabel('Ventas ($)')
-    ax.set_title('Comparativo Bimensual de Ventas', fontsize=12, fontweight='bold')
-    ax.set_xticks(list(x))
-    ax.set_xticklabels(labels, rotation=10)
-    ax.legend()
     plt.tight_layout()
 
     img_buf = io.BytesIO()
@@ -29,120 +43,216 @@ def generar_grafica_comparativa(labels, valores_cliente, valores_proveedor):
     return img_buf
 
 
+def redactar_analisis(v_actual, v_anio_ant, v_bim_ant, nom_b_actual, nom_b_prev, anio_actual):
+    """Genera una redacción ejecutiva basada en los resultados numéricos."""
+    var_vs_anio = ((v_actual - v_anio_ant) / v_anio_ant * 100) if v_anio_ant > 0 else 0
+    var_vs_bim = ((v_actual - v_bim_ant) / v_bim_ant * 100) if v_bim_ant > 0 else 0
+
+    tend_anio = "un crecimiento" if var_vs_anio >= 0 else "un decrecimiento"
+    tend_bim = "un incremento" if var_vs_bim >= 0 else "una disminución"
+
+    texto = (
+        f"Durante el período {nom_b_actual} de {anio_actual}, se alcanzaron ventas totales de ${v_actual:,.2f}. "
+        f"Al comparar este resultado con el mismo período del año anterior ({nom_b_actual} {anio_actual-1}), "
+        f"se evidencia {tend_anio} del {abs(var_vs_anio):.2f}% (frente a ${v_anio_ant:,.2f}). "
+        f"Por otra parte, en relación con el bimestre inmediatamente anterior ({nom_b_prev}), el comportamiento registró "
+        f"{tend_bim} del {abs(var_vs_bim):.2f}% respecto a los ${v_bim_ant:,.2f} facturados previamente."
+    )
+    return texto
+
+
 def render_modulo_informe(df):
     st.header("📄 Generador de Informe Bimensual (Word)")
 
-    # Ruta a tu plantilla en la carpeta 'templates'
     RUTA_PLANTILLA = os.path.join("templates", "BIMENSUAL MAY-JUN.docx")
 
     if not os.path.exists(RUTA_PLANTILLA):
-        st.error(f"❌ No se encontró la plantilla en `{RUTA_PLANTILLA}`. Revisa que el archivo exista en la carpeta templates.")
+        st.error(f"❌ No se encontró la plantilla en `{RUTA_PLANTILLA}`.")
         return
 
-    st.subheader("1. Selección de Filtros (Cliente o Asesor)")
-    modo_seleccion = st.radio("Criterio de selección:", ["Por VENDEDOR (Asesor)", "Selección Manual de Clientes"])
+    col_a, col_b = st.columns(2)
+    
+    with col_a:
+        st.subheader("1. Selección de Clientes")
+        modo_cli = st.radio("Método para clientes:", ["Excel de Clientes", "Por VENDEDOR / Asesor", "Selección Manual"])
+        
+        clientes_sel = []
+        vendedor_nom = "Varios / Lista Propia"
 
-    if modo_seleccion == "Por VENDEDOR (Asesor)":
-        vendedores = sorted(df["VENDEDOR"].dropna().unique().tolist()) if "VENDEDOR" in df.columns else []
-        vendedor_sel = st.selectbox("Selecciona el Vendedor / Asesor:", vendedores)
-        clientes_sel = df[df["VENDEDOR"] == vendedor_sel]["CLIENTE"].dropna().unique().tolist()
-        st.info(f"Clientes asignados a {vendedor_sel}: {len(clientes_sel)}")
-    else:
-        vendedor_sel = "Selección Manual"
-        todos_clientes = sorted(df["CLIENTE"].dropna().unique().tolist()) if "CLIENTE" in df.columns else []
-        clientes_sel = st.multiselect("Selecciona uno o varios Clientes:", todos_clientes)
+        if modo_cli == "Excel de Clientes":
+            file_cli = st.file_uploader("Subir listado de Clientes (Excel)", type=["xlsx", "xls"], key="inf_cli")
+            if file_cli:
+                df_c = pd.read_excel(file_cli)
+                col_c = 'NOMBRE SN' if 'NOMBRE SN' in df_c.columns else df_c.columns[0]
+                clientes_sel = df_c[col_c].dropna().astype(str).str.strip().unique().tolist()
+                st.success(f"Cargados {len(clientes_sel)} clientes.")
+        elif modo_cli == "Por VENDEDOR / Asesor":
+            if "VENDEDOR" in df.columns:
+                vendedores = sorted(df["VENDEDOR"].dropna().unique().tolist())
+                vendedor_nom = st.selectbox("Selecciona Vendedor:", vendedores)
+                clientes_sel = df[df["VENDEDOR"] == vendedor_nom]["CLIENTE"].dropna().unique().tolist()
+                st.info(f"Clientes de {vendedor_nom}: {len(clientes_sel)}")
+        else:
+            todos_c = sorted(df["CLIENTE"].dropna().unique().tolist()) if "CLIENTE" in df.columns else []
+            clientes_sel = st.multiselect("Clientes:", todos_c)
 
-    st.subheader("2. Selección de Períodos")
-    col1, col2 = st.columns(2)
-    with col1:
+    with col_b:
+        st.subheader("2. Selección de Fabricantes / Proveedores")
+        file_prov = st.file_uploader("Subir listado de Fabricantes (Excel)", type=["xlsx", "xls"], key="inf_prov")
+        proveedores_sel = []
+        if file_prov:
+            df_p = pd.read_excel(file_prov)
+            col_p = df_p.columns[0]
+            for col in df_p.columns:
+                if 'FABRICANTE' in col.upper() or 'PROVEEDOR' in col.upper() or 'MARCA' in col.upper():
+                    col_p = col
+                    break
+            proveedores_sel = df_p[col_p].dropna().astype(str).str.strip().unique().tolist()
+            st.success(f"Cargados {len(proveedores_sel)} fabricantes.")
+        else:
+            st.caption("Si no subes archivo, se evaluarán todos los proveedores del catálogo.")
+
+    st.markdown("---")
+    st.subheader("3. Período a Reportar")
+    c1, c2 = st.columns(2)
+    with c1:
+        codigo_bimestre = st.selectbox("Seleccione Bimestre Actual:", list(MAPA_BIMESTRES.keys()), 
+                                       format_func=lambda x: MAPA_BIMESTRES[x]["nombre"])
+    with c2:
         anio_actual = st.number_input("Año del Informe", min_value=2020, max_value=2030, value=2026)
-    with col2:
-        opciones_bimestre = {
-            "Enero - Febrero": ([1, 2], "Noviembre - Diciembre", [11, 12]),
-            "Marzo - Abril": ([3, 4], "Enero - Febrero", [1, 2]),
-            "Mayo - Junio": ([5, 6], "Marzo - Abril", [3, 4]),
-            "Julio - Agosto": ([7, 8], "Mayo - Junio", [5, 6]),
-            "Septiembre - Octubre": ([9, 10], "Julio - Agosto", [7, 8]),
-            "Noviembre - Diciembre": ([11, 12], "Septiembre - Octubre", [9, 10])
-        }
-        bimestre_nombre = st.selectbox("Selecciona el Bimestre Actual:", list(opciones_bimestre.keys()))
 
-    if st.button("🚀 Generar Informe en Word"):
+    if st.button("🚀 Generar Informe Word Bimensual"):
         if not clientes_sel:
-            st.warning("Debes seleccionar al menos un cliente o asesor con clientes asociados.")
+            st.warning("⚠️ Debes definir al menos un cliente o subir la lista de clientes.")
             return
 
-        meses_curr, prev_bim_nombre, meses_prev = opciones_bimestre[bimestre_nombre]
+        # 1. Copia y filtro estricto: SOLO FACTURAS
+        df_work = df.copy()
+        if "TIPO DOC" in df_work.columns:
+            df_work = df_work[df_work["TIPO DOC"].astype(str).str.upper().str.contains("FACTURA")]
 
-        df_copy = df.copy()
+        # 2. Fechas y formatos
+        if "FECHA" in df_work.columns:
+            df_work["FECHA"] = pd.to_datetime(df_work["FECHA"], errors='coerce')
+            df_work["ANIO"] = df_work["FECHA"].dt.year
+            df_work["MES"] = df_work["FECHA"].dt.month
 
-        # --- FILTRO CLAVE: Solo tomar documentos de tipo FACTURA ---
-        if "TIPO DOC" in df_copy.columns:
-            df_copy = df_copy[df_copy["TIPO DOC"].astype(str).str.upper().str.contains("FACTURA")]
+        col_val = "VALOR_VENTA" if "VALOR_VENTA" in df_work.columns else "VALOR"
+        df_work[col_val] = pd.to_numeric(df_work[col_val], errors='coerce').fillna(0)
 
-        if "FECHA" in df_copy.columns:
-            df_copy["FECHA"] = pd.to_datetime(df_copy["FECHA"], errors='coerce')
-            df_copy["ANIO"] = df_copy["FECHA"].dt.year
-            df_copy["MES"] = df_copy["FECHA"].dt.month
+        # Columna de proveedor/fabricante
+        col_prov = None
+        for cp in ["FABRICANTE", "PROVEEDOR", "MARCA"]:
+            if cp in df_work.columns:
+                col_prov = cp
+                break
+        if not col_prov:
+            col_prov = "FABRICANTE"
+            df_work[col_prov] = "GENERAL"
 
-        # Columna de valor numérico
-        col_valor = "VALOR_VENTA" if "VALOR_VENTA" in df_copy.columns else "VALOR"
-        df_copy[col_valor] = pd.to_numeric(df_copy[col_valor], errors='coerce').fillna(0)
+        # Filtrar por clientes elegidos
+        df_work = df_work[df_work["CLIENTE"].isin(clientes_sel)]
 
-        # Filtrar facturas de los clientes seleccionados
-        df_clientes = df_copy[df_copy["CLIENTE"].isin(clientes_sel)]
+        # Filtrar por proveedores elegidos si se subió lista
+        if proveedores_sel:
+            df_work = df_work[df_work[col_prov].isin(proveedores_sel)]
 
-        # --- Período 1: Bimestre Actual (ej: Jul-Ago 2026) ---
-        p1 = df_clientes[(df_clientes["ANIO"] == anio_actual) & (df_clientes["MES"].isin(meses_curr))]
-        v_p1_cli = p1[col_valor].sum()
+        # Definir configuraciones de períodos
+        cfg_b = MAPA_BIMESTRES[codigo_bimestre]
+        meses_act = cfg_b["meses"]
+        
+        cod_prev = cfg_b["previo"]
+        cfg_prev = MAPA_BIMESTRES[cod_prev]
+        meses_prev = cfg_b["meses_prev"]
+        
+        anio_prev_bim = anio_actual if codigo_bimestre != "B1" else (anio_actual - 1)
 
-        # --- Período 2: Mismo bimestre año anterior (ej: Jul-Ago 2025) ---
-        p2 = df_clientes[(df_clientes["ANIO"] == (anio_actual - 1)) & (df_clientes["MES"].isin(meses_curr))]
-        v_p2_cli = p2[col_valor].sum()
+        # Filtros de DataFrames por periodo
+        df_p1 = df_work[(df_work["ANIO"] == anio_actual) & (df_work["MES"].isin(meses_act))] # B actual 2026
+        df_p2 = df_work[(df_work["ANIO"] == (anio_actual - 1)) & (df_work["MES"].isin(meses_act))] # B actual 2025
+        df_p3 = df_work[(df_work["ANIO"] == anio_prev_bim) & (df_work["MES"].isin(meses_prev))] # B previo
 
-        # --- Período 3: Bimestre anterior mismo año (ej: May-Jun 2026) ---
-        anio_prev_bim = anio_actual if bimestre_nombre != "Enero - Febrero" else anio_actual - 1
-        p3 = df_clientes[(df_clientes["ANIO"] == anio_prev_bim) & (df_clientes["MES"].isin(meses_prev))]
-        v_p3_cli = p3[col_valor].sum()
+        # Nombrado de Encabezados de Tabla
+        head_b_act = f"VENTA {codigo_bimestre} {anio_actual}"
+        head_b_ant_anio = f"VENTA {codigo_bimestre} {anio_actual - 1}"
+        head_b_prev = f"VENTA {cod_prev} {anio_prev_bim}"
 
-        # Totales Proveedores
-        v_p1_prov = p1[col_valor].sum()
-        v_p2_prov = p2[col_valor].sum()
-        v_p3_prov = p3[col_valor].sum()
+        # --- TABLA 1: PROVEEDORES ---
+        prov_p1 = df_p1.groupby(col_prov)[col_val].sum()
+        prov_p2 = df_p2.groupby(col_prov)[col_val].sum()
+        prov_p3 = df_p3.groupby(col_prov)[col_val].sum()
 
-        labels = [
-            f"{bimestre_nombre}\n{anio_actual}",
-            f"{bimestre_nombre}\n{anio_actual-1}",
-            f"{prev_bim_nombre}\n{anio_prev_bim}"
-        ]
-        valores_cli = [v_p1_cli, v_p2_cli, v_p3_cli]
-        valores_prov = [v_p1_prov, v_p2_prov, v_p3_prov]
+        todos_provs = sorted(list(set(prov_p1.index).union(set(prov_p2.index)).union(set(prov_p3.index))))
+        
+        tabla_proveedores = []
+        for pr in todos_provs:
+            tabla_proveedores.append({
+                "PROVEEDOR": pr,
+                "v_act": f"${prov_p1.get(pr, 0):,.2f}",
+                "v_p2": f"${prov_p2.get(pr, 0):,.2f}",
+                "v_p3": f"${prov_p3.get(pr, 0):,.2f}"
+            })
 
-        grafica_buf = generar_grafica_comparativa(labels, valores_cli, valores_prov)
+        # --- TABLA 2: CLIENTES ---
+        cli_p1 = df_p1.groupby("CLIENTE")[col_val].sum()
+        cli_p2 = df_p2.groupby("CLIENTE")[col_val].sum()
+        cli_p3 = df_p3.groupby("CLIENTE")[col_val].sum()
 
-        # Cargar plantilla Word e inyectar valores
+        todos_clis = sorted(list(set(cli_p1.index).union(set(cli_p2.index)).union(set(cli_p3.index))))
+
+        tabla_clientes = []
+        for cl in todos_clis:
+            tabla_clientes.append({
+                "CLIENTE": cl,
+                "v_act": f"${cli_p1.get(cl, 0):,.2f}",
+                "v_p2": f"${cli_p2.get(cl, 0):,.2f}",
+                "v_p3": f"${cli_p3.get(cl, 0):,.2f}"
+            })
+
+        # Totales Consolidados
+        tot_act = df_p1[col_val].sum()
+        tot_p2 = df_p2[col_val].sum()
+        tot_p3 = df_p3[col_val].sum()
+
+        # Gráfica
+        labels_graph = [f"{codigo_bimestre} {anio_actual}", f"{codigo_bimestre} {anio_actual-1}", f"{cod_prev} {anio_prev_bim}"]
+        buf_grafica = generar_grafica_comparativa(labels_graph, [tot_act, tot_p2, tot_p3])
+
+        # Redacción del análisis sintético
+        texto_analisis = redactar_analisis(
+            tot_act, tot_p2, tot_p3,
+            cfg_b["nombre"], cfg_prev["nombre"], anio_actual
+        )
+
+        # Inyección en plantilla Word
         doc = DocxTemplate(RUTA_PLANTILLA)
 
         contexto = {
-            "vendedor": vendedor_sel,
-            "bimestre": bimestre_nombre,
+            "vendedor": vendedor_nom,
+            "bimestre": cfg_b["nombre"],
             "anio": str(anio_actual),
-            "total_cliente_p1": f"${v_p1_cli:,.2f}",
-            "total_cliente_p2": f"${v_p2_cli:,.2f}",
-            "total_cliente_p3": f"${v_p3_cli:,.2f}",
-            "grafica_ventas": InlineImage(doc, grafica_buf, width=Inches(5.8))
+            "col_b_act": head_b_act,
+            "col_b_ant": head_b_ant_anio,
+            "col_b_prev": head_b_prev,
+            "tabla_proveedores": tabla_proveedores,
+            "tabla_clientes": tabla_clientes,
+            "total_b_act": f"${tot_act:,.2f}",
+            "total_b_ant": f"${tot_p2:,.2f}",
+            "total_b_prev": f"${tot_p3:,.2f}",
+            "analisis_texto": texto_analisis,
+            "grafica_ventas": InlineImage(doc, buf_grafica, width=Inches(5.8))
         }
 
         doc.render(contexto)
 
-        out_buffer = io.BytesIO()
-        doc.save(out_buffer)
-        out_buffer.seek(0)
+        out = io.BytesIO()
+        doc.save(out)
+        out.seek(0)
 
-        st.success("✅ ¡Informe generado con éxito!")
+        st.success("✅ ¡Informe generado con tablas de Fabricantes, Clientes y Análisis automático!")
         st.download_button(
-            label="📥 Descargar Informe Word Editado (.docx)",
-            data=out_buffer,
-            file_name=f"Informe_{vendedor_sel}_{bimestre_nombre}_{anio_actual}.docx",
+            label="📥 Descargar Informe Word (.docx)",
+            data=out,
+            file_name=f"Informe_{codigo_bimestre}_{anio_actual}.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
