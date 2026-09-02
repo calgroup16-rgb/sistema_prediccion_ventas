@@ -6,6 +6,10 @@ import streamlit as st
 from docxtpl import DocxTemplate, InlineImage
 from docx.shared import Inches
 
+# Filtrar únicamente los registros que correspondan a Facturas
+        if "TIPO DOC" in df_copy.columns:
+            df_copy = df_copy[df_copy["TIPO DOC"].astype(str).str.upper().str.contains("FACTURA")]
+
 def generar_grafica_comparativa(labels, valores_cliente):
     """Genera una gráfica de barras para la comparación bimensual."""
     fig, ax = plt.subplots(figsize=(6, 3.5))
