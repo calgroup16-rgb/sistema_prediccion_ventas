@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import streamlit as st
 from docxtpl import DocxTemplate, InlineImage
 from docx.shared import Inches
+import jinja2
 
 MAPA_BIMESTRES = {
     "B1": {"nombre": "B1 (Ene - Feb)", "texto_titulo": "Enero - Febrero", "meses": [1, 2], "previo": "B6", "meses_prev": [11, 12]},
@@ -16,7 +17,6 @@ MAPA_BIMESTRES = {
 }
 
 def generar_grafica_comparativa(labels, valores_totales):
-    """Genera la imagen de la gráfica de barras para inyectar en Word."""
     fig, ax = plt.subplots(figsize=(6.5, 3.5))
     colores = ['#1f77b4', '#ff7f0e', '#2ca02c']
     
@@ -32,7 +32,6 @@ def generar_grafica_comparativa(labels, valores_totales):
                     textcoords="offset points",
                     ha='center', va='bottom', fontsize=9, fontweight='bold', fontfamily='sans-serif')
 
-    # Ajustes estéticos
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     plt.tight_layout()
@@ -45,7 +44,6 @@ def generar_grafica_comparativa(labels, valores_totales):
 
 
 def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, df_p2, df_p3, col_prov, nom_b_act, nom_b_prev, anio_actual):
-    """Genera el texto de análisis ejecutivo y la lista de aspectos por mejorar redactados en párrafos."""
     var_vs_anio = ((v_act - v_p2) / v_p2 * 100) if v_p2 > 0 else 0
     var_vs_bim = ((v_act - v_p3) / v_p3 * 100) if v_p3 > 0 else 0
 
@@ -60,12 +58,11 @@ def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, df_p2, df_p3, col_prov
         f"{tend_bim} del {abs(var_vs_bim):.2f}% respecto a los ${v_p3:,.2f} facturados previamente."
     )
 
-    # Identificación de clientes con dinámicas clave
     col_val = "VALOR_VENTA" if "VALOR_VENTA" in df_p1.columns else "VALOR"
     top_clis = df_p1.groupby("CLIENTE")[col_val].sum().sort_values(ascending=False).index.tolist()
-    cli_1 = top_clis[0] if len(top_clis) > 0 else "cuentas principales"
-    cli_2 = top_clis[1] if len(top_clis) > 1 else "cuentas secundarias"
-    cli_3 = top_clis[2] if len(top_clis) > 2 else "otros clientes estratégicos"
+    cli_1 = str(top_clis[0]) if len(top_clis) > 0 else "cuentas principales"
+    cli_2 = str(top_clis[1]) if len(top_clis) > 1 else "cuentas secundarias"
+    cli_3 = str(top_clis[2]) if len(top_clis) > 2 else "otros clientes estratégicos"
 
     aspectos = [
         {
@@ -134,36 +131,29 @@ def render_modulo_informe(df_global):
         nom_b_act = cfg_b["nombre"]
         nom_b_prev = MAPA_BIMESTRES[cfg_b["previo"]]["nombre"]
 
-        # Filtrado por Vendedor y Años
         df_vend = df_global[df_global["VENDEDOR"] == vendedor_sel]
         
-        # Período 1: Bimestre Actual (Año seleccionado)
         df_p1 = df_vend[(df_vend["AÑO"] == anio_sel) & (df_vend["MES"].isin(cfg_b["meses"]))]
-        
-        # Período 2: Mismo Bimestre (Año Anterior)
         df_p2 = df_vend[(df_vend["AÑO"] == (anio_sel - 1)) & (df_vend["MES"].isin(cfg_b["meses"]))]
         
-        # Período 3: Bimestre Anterior (Mismo año o previo según ciclo)
         anio_p3 = anio_sel if bim_sel != "B1" else (anio_sel - 1)
         df_p3 = df_vend[(df_vend["AÑO"] == anio_p3) & (df_vend["MES"].isin(cfg_b["meses_prev"]))]
 
         col_val = "VALOR_VENTA" if "VALOR_VENTA" in df_global.columns else "VALOR"
-        v_act = df_p1[col_val].sum()
-        v_p2 = df_p2[col_val].sum()
-        v_p3 = df_p3[col_val].sum()
+        v_act = float(df_p1[col_val].sum()) if not df_p1.empty else 0.0
+        v_p2 = float(df_p2[col_val].sum()) if not df_p2.empty else 0.0
+        v_p3 = float(df_p3[col_val].sum()) if not df_p3.empty else 0.0
 
         col_prov = "PROVEEDOR" if "PROVEEDOR" in df_global.columns else "FABRICANTE"
 
-        # Generar Tablas Consolidadas
-        # 1. Proveedores
         provs = set(df_p1[col_prov].dropna()).union(df_p2[col_prov].dropna()).union(df_p3[col_prov].dropna())
         tabla_provs = []
         for p in provs:
-            va = df_p1[df_p1[col_prov] == p][col_val].sum()
-            vp2 = df_p2[df_p2[col_prov] == p][col_val].sum()
-            vp3 = df_p3[df_p3[col_prov] == p][col_val].sum()
+            va = float(df_p1[df_p1[col_prov] == p][col_val].sum()) if not df_p1.empty else 0.0
+            vp2 = float(df_p2[df_p2[col_prov] == p][col_val].sum()) if not df_p2.empty else 0.0
+            vp3 = float(df_p3[df_p3[col_prov] == p][col_val].sum()) if not df_p3.empty else 0.0
             tabla_provs.append({
-                "PROVEEDOR": p,
+                "PROVEEDOR": str(p),
                 "v_act": f"${va:,.2f}",
                 "v_p2": f"${vp2:,.2f}",
                 "v_p3": f"${vp3:,.2f}",
@@ -171,15 +161,14 @@ def render_modulo_informe(df_global):
             })
         tabla_provs = sorted(tabla_provs, key=lambda x: x["raw_val"], reverse=True)
 
-        # 2. Clientes
         clis = set(df_p1["CLIENTE"].dropna()).union(df_p2["CLIENTE"].dropna()).union(df_p3["CLIENTE"].dropna())
         tabla_clis = []
         for c in clis:
-            va = df_p1[df_p1["CLIENTE"] == c][col_val].sum()
-            vp2 = df_p2[df_p2["CLIENTE"] == c][col_val].sum()
-            vp3 = df_p3[df_p3["CLIENTE"] == c][col_val].sum()
+            va = float(df_p1[df_p1["CLIENTE"] == c][col_val].sum()) if not df_p1.empty else 0.0
+            vp2 = float(df_p2[df_p2["CLIENTE"] == c][col_val].sum()) if not df_p2.empty else 0.0
+            vp3 = float(df_p3[df_p3["CLIENTE"] == c][col_val].sum()) if not df_p3.empty else 0.0
             tabla_clis.append({
-                "CLIENTE": c,
+                "CLIENTE": str(c),
                 "v_act": f"${va:,.2f}",
                 "v_p2": f"${vp2:,.2f}",
                 "v_p3": f"${vp3:,.2f}",
@@ -187,7 +176,6 @@ def render_modulo_informe(df_global):
             })
         tabla_clis = sorted(tabla_clis, key=lambda x: x["raw_val"], reverse=True)
 
-        # Generar Gráfica y Redacción
         head_b_act = f"VENTA {bim_sel} {anio_sel}"
         head_b_ant_anio = f"VENTA {bim_sel} {anio_sel-1}"
         head_b_prev = f"VENTA {cfg_b['previo']} {anio_p3}"
@@ -201,7 +189,6 @@ def render_modulo_informe(df_global):
             v_act, v_p2, v_p3, df_p1, df_p2, df_p3, col_prov, nom_b_act, nom_b_prev, anio_sel
         )
 
-        # Cargar Plantilla Word
         path_template = "templates/BIMENSUAL MAY-JUN.docx"
         if not os.path.exists(path_template):
             st.error(f"❌ No se encontró la plantilla en {path_template}")
@@ -210,9 +197,9 @@ def render_modulo_informe(df_global):
         doc = DocxTemplate(path_template)
 
         contexto = {
-            "vendedor": vendedor_sel,
-            "nombre_responsable": vendedor_sel,
-            "periodo_titulo": cfg_b["texto_titulo"],
+            "vendedor": str(vendedor_sel),
+            "nombre_responsable": str(vendedor_sel),
+            "periodo_titulo": str(cfg_b["texto_titulo"]),
             "titulo_informe": f"INFORME BIMENSUAL {cfg_b['texto_titulo'].upper()} - {vendedor_sel.upper()}",
             "anio": str(anio_sel),
             "col_b_act": head_b_act,
@@ -229,16 +216,21 @@ def render_modulo_informe(df_global):
             "grafica_ventas": InlineImage(doc, buf_grafica, width=Inches(6.0))
         }
 
-        doc.render(contexto)
-        
-        output_buf = io.BytesIO()
-        doc.save(output_buf)
-        output_buf.seek(0)
+        # Renderizado seguro con Jinja2
+        try:
+            jinja_env = jinja2.Environment(autoescape=False)
+            doc.render(contexto, jinja_env)
+            
+            output_buf = io.BytesIO()
+            doc.save(output_buf)
+            output_buf.seek(0)
 
-        st.success("✅ Informe generado correctamente.")
-        st.download_button(
-            label="📥 Descargar Informe Word (.docx)",
-            data=output_buf,
-            file_name=f"INFORME_BIMENSUAL_{bim_sel}_{vendedor_sel}.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        )
+            st.success("✅ Informe generado correctamente.")
+            st.download_button(
+                label="📥 Descargar Informe Word (.docx)",
+                data=output_buf,
+                file_name=f"INFORME_BIMENSUAL_{bim_sel}_{vendedor_sel}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+        except Exception as err:
+            st.error(f"⚠️ Error al procesar la plantilla Word: {err}")
