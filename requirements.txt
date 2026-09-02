@@ -4,3 +4,6 @@ numpy
 openpyxl
 scikit-learn
 plotly
+python-docx
+docxtpl
+matplotlib
