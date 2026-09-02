@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+from informe_bimensual import render_modulo_informe
 
 # Configuración de página
 st.set_page_config(
@@ -216,3 +217,11 @@ if 'df_ventas' in st.session_state and st.session_state['df_ventas'] is not None
 
 else:
     st.info("👋 Por favor, suba el archivo Excel general de ventas en el menú de la izquierda para desplegar la información.")
+from informe_bimensual import render_modulo_informe
+
+# ... (Todo tu código previo de app.py permanece igual) ...
+
+# Agregar el módulo de generación de informe al final de tu app
+st.divider()
+if 'df' in locals():
+    render_modulo_informe(df)
