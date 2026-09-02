@@ -5,11 +5,6 @@ import matplotlib.pyplot as plt
 import streamlit as st
 from docxtpl import DocxTemplate, InlineImage
 from docx.shared import Inches
-
-# Filtrar únicamente los registros que correspondan a Facturas
-        if "TIPO DOC" in df_copy.columns:
-            df_copy = df_copy[df_copy["TIPO DOC"].astype(str).str.upper().str.contains("FACTURA")]
-
 def generar_grafica_comparativa(labels, valores_cliente):
     """Genera una gráfica de barras para la comparación bimensual."""
     fig, ax = plt.subplots(figsize=(6, 3.5))
@@ -71,12 +66,22 @@ def render_modulo_informe(df):
         meses_curr, prev_bim_nombre, meses_prev = opciones_bimestre[bimestre_nombre]
 
         df_copy = df.copy()
+
+        # 1. Filtro estricto: Solo tomar tipo de documento FACTURA
+        if "TIPO DOC" in df_copy.columns:
+            df_copy = df_copy[df_copy["TIPO DOC"].astype(str).str.upper().str.contains("FACTURA")]
+
+        # 2. Formato de fechas
         if "FECHA" in df_copy.columns:
             df_copy["FECHA"] = pd.to_datetime(df_copy["FECHA"], errors='coerce')
             df_copy["ANIO"] = df_copy["FECHA"].dt.year
             df_copy["MES"] = df_copy["FECHA"].dt.month
 
-        # Filtrar datos de la lista de clientes seleccionados
+        # 3. Formato numérico de valores
+        col_valor = "VALOR_VENTA" if "VALOR_VENTA" in df_copy.columns else "VALOR"
+        df_copy[col_valor] = pd.to_numeric(df_copy[col_valor], errors='coerce').fillna(0)
+
+        # 4. Filtrar solo las facturas de los clientes seleccionados
         df_clientes = df_copy[df_copy["CLIENTE"].isin(clientes_sel)]
 
         # --- Cálculos Período 1: Actual ---
