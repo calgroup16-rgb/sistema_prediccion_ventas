@@ -56,7 +56,11 @@ def obtener_top10_alimentacion_animal(df):
 
 def cargar_excel(archivo):
     df = pd.read_excel(archivo)
-
+# Filtrar solo FACTURAS para todo el análisis global
+    if "TIPO DOC" in df.columns:
+        df = df[df["TIPO DOC"].astype(str).str.upper().str.contains("FACTURA")]
+        
+    return df
     # Normalizar nombres de columnas
     df.columns = (
         df.columns
