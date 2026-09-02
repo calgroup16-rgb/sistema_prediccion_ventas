@@ -26,7 +26,7 @@ def generar_grafica_comparativa(labels, valores_cliente):
 def render_modulo_informe(df):
     st.header("📄 Generación de Informe Bimensual")
 
-    RUTA_PLANTILLA = os.path.join("templates", "plantilla_informe.docx")
+    RUTA_PLANTILLA = os.path.join("templates", "BIMENSUAL MAY-JUN.docx")
 
     if not os.path.exists(RUTA_PLANTILLA):
         st.error(f"No se encontró la plantilla en `{RUTA_PLANTILLA}`. Revisa que subiste el archivo a la carpeta 'templates'.")
