@@ -66,7 +66,7 @@ def generar_grafica_comparativa(labels, valores_totales):
     plt.close(fig)
     return img_buf
 
-def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, col_prov, nom_b_act, nom_b_prev, anio_actual):
+def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, col_prov, nom_b_act, nom_b_prev, anio_actual, col_val):
     var_vs_anio = ((v_act - v_p2) / v_p2 * 100) if v_p2 > 0 else 0
     var_vs_bim = ((v_act - v_p3) / v_p3 * 100) if v_p3 > 0 else 0
 
@@ -74,17 +74,20 @@ def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, col_prov, nom_b_act, n
     tend_bim = "un incremento" if var_vs_bim >= 0 else "una disminución"
 
     texto_analisis = (
-        f"Durante el período {nom_b_act} de {anio_actual}, se alcanzaron ventas totales de ${v_act:,.2f}. "
+        f"Durante el período {nom_b_act} de {anio_actual}, se alcanzaron ventas totales netas de ${v_act:,.2f}. "
         f"Al comparar este resultado con el mismo período del año anterior ({nom_b_act} {anio_actual-1}), "
         f"se evidencia {tend_anio} del {abs(var_vs_anio):.2f}% (frente a ${v_p2:,.2f}). "
         f"Por otra parte, en relación con el comportamiento del bimestre inmediatamente anterior ({nom_b_prev}), se registró "
         f"{tend_bim} del {abs(var_vs_bim):.2f}% respecto a los ${v_p3:,.2f} facturados previamente."
     )
 
-    col_val = "VALOR_VENTA" if "VALOR_VENTA" in df_p1.columns else ("VALOR" if "VALOR" in df_p1.columns else "TOTAL")
-    col_cli = "CLIENTE" if "CLIENTE" in df_p1.columns else "NOMBRE_CLIENTE"
-    
-    top_clis = df_p1.groupby(col_cli)[col_val].sum().sort_values(ascending=False).index.tolist() if col_cli in df_p1.columns and not df_p1.empty else []
+    col_cli = None
+    for c in ["CLIENTE", "NOMBRE_CLIENTE", "TERCERO", "RAZON_SOCIAL"]:
+        if c in df_p1.columns:
+            col_cli = c
+            break
+
+    top_clis = df_p1.groupby(col_cli)[col_val].sum().sort_values(ascending=False).index.tolist() if col_cli and not df_p1.empty else []
     cli_1 = str(top_clis[0]) if len(top_clis) > 0 else "cuentas principales"
     cli_2 = str(top_clis[1]) if len(top_clis) > 1 else "cuentas secundarias"
     cli_3 = str(top_clis[2]) if len(top_clis) > 2 else "otros clientes estratégicos"
@@ -144,7 +147,7 @@ def dar_formato_tabla(table, col_widths, headers, rows_data):
                 shading = OxmlElement('w:shd')
                 shading.set(qn('w:val'), 'clear')
                 shading.set(qn('w:color'), 'auto')
-                shading.set(qn('w:fill'), 'D9E1F2') # Fondo azul claro para el Total
+                shading.set(qn('w:fill'), 'D9E1F2') # Azul claro para el Total
                 row_cells[c_idx]._tc.get_or_add_tcPr().append(shading)
             elif r_idx % 2 == 1:
                 shading = OxmlElement('w:shd')
@@ -170,7 +173,7 @@ def construir_documento_word(contexto, path_template=None):
     r_title.font.size = Pt(16)
     r_title.font.color.rgb = RGBColor(31, 78, 120)
 
-    # Subtítulo Vendedor / Responsable
+    # Subtítulo Responsable
     p_sub = doc.add_paragraph()
     p_sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
     r_sub = p_sub.add_run(f"Responsable Comercial: {contexto['vendedor']} | Año: {contexto['anio']}")
@@ -282,20 +285,45 @@ def render_modulo_informe(df_global):
                 st.error(f"Error al leer archivo de fabricantes: {e}")
 
     with tab_gen:
+        # Detectar la columna de TIPO_DOC
         col_tipo_doc = None
-        for col in ["TIPO_DOCUMENTO", "TIPO_DOC", "DOCUMENTO", "TIPO"]:
+        for col in ["TIPO DOC", "TIPO_DOC", "TIPO DOCUMENTO", "DOCUMENTO", "TIPO"]:
             if col in df_global.columns:
                 col_tipo_doc = col
                 break
 
         df_base = df_global.copy()
+        
+        # Filtro de documentos: Incluir FACTURA y NOTA CREDITO (que restan)
         if col_tipo_doc:
-            df_base = df_base[df_base[col_tipo_doc].astype(str).str.upper().str.contains("FACTURA", na=False)]
+            mask_docs = df_base[col_tipo_doc].astype(str).str.upper().str.contains("FACTURA|NOTA", na=False)
+            df_base = df_base[mask_docs]
 
+        # Detección explícita de TOTAL LINEA
+        col_val = None
+        for c in ["TOTAL LINEA", "TOTAL_LINEA", "VALOR_VENTA", "VALOR", "TOTAL"]:
+            if c in df_base.columns:
+                col_val = c
+                break
+        
+        if not col_val:
+            st.error("⚠️ No se encontró la columna 'TOTAL LINEA' en la base de datos.")
+            return
+
+        # Detección de columnas de Cliente, Proveedor y Vendedor
         col_vendedor = "VENDEDOR" if "VENDEDOR" in df_base.columns else "RESPONSABLE"
-        col_cliente = "CLIENTE" if "CLIENTE" in df_base.columns else "NOMBRE_CLIENTE"
-        col_prov = "PROVEEDOR" if "PROVEEDOR" in df_base.columns else ("FABRICANTE" if "FABRICANTE" in df_base.columns else "MARCA")
-        col_val = "VALOR_VENTA" if "VALOR_VENTA" in df_base.columns else ("VALOR" if "VALOR" in df_base.columns else "TOTAL")
+        
+        col_cliente = None
+        for c in ["CLIENTE", "NOMBRE_CLIENTE", "TERCERO", "RAZON_SOCIAL"]:
+            if c in df_base.columns:
+                col_cliente = c
+                break
+                
+        col_prov = None
+        for c in ["FABRICANTE", "PROVEEDOR", "MARCA"]:
+            if c in df_base.columns:
+                col_prov = c
+                break
 
         st.subheader("Configuración del Informe")
         col1, col2, col3 = st.columns(3)
@@ -323,14 +351,14 @@ def render_modulo_informe(df_global):
             anio_p3 = anio_sel if bim_sel != "B1" else (anio_sel - 1)
             df_p3 = df_base[(df_base["AÑO"] == anio_p3) & (df_base["MES"].isin(cfg_b["meses_prev"]))]
 
-            # Totales globales de ventas para gráfica/análisis
+            # Totales globales de ventas netas (usando TOTAL LINEA)
             v_act = float(df_p1[col_val].sum()) if not df_p1.empty else 0.0
             v_p2 = float(df_p2[col_val].sum()) if not df_p2.empty else 0.0
             v_p3 = float(df_p3[col_val].sum()) if not df_p3.empty else 0.0
 
             # --- 1. TABLA DE FABRICANTES / PROVEEDORES (CON 'Otros' Y 'Total') ---
             tabla_provs = []
-            if col_prov in df_base.columns:
+            if col_prov and col_prov in df_base.columns:
                 lista_fab_custom = []
                 if 'df_fabricantes_custom' in st.session_state and not st.session_state['df_fabricantes_custom'].empty:
                     df_fc = st.session_state['df_fabricantes_custom']
@@ -369,12 +397,11 @@ def render_modulo_informe(df_global):
                         tabla_provs.append({"PROVEEDOR": str(p), "v_act_num": va, "v_p2_num": vp2, "v_p3_num": vp3})
                     tabla_provs = sorted(tabla_provs, key=lambda x: x["v_act_num"], reverse=True)
 
-                # Fila de TOTAL FABRICANTES
+                # Fila TOTAL FABRICANTES
                 tot_fab_act = sum(x["v_act_num"] for x in tabla_provs)
                 tot_fab_p2 = sum(x["v_p2_num"] for x in tabla_provs)
                 tot_fab_p3 = sum(x["v_p3_num"] for x in tabla_provs)
 
-                # Formatear números a string con $
                 for item in tabla_provs:
                     item["v_act"] = f"${item['v_act_num']:,.2f}"
                     item["v_p2"] = f"${item['v_p2_num']:,.2f}"
@@ -387,9 +414,9 @@ def render_modulo_informe(df_global):
                     "v_p3": f"${tot_fab_p3:,.2f}"
                 })
 
-            # --- 2. TABLA DE CLIENTES (EXCLUSIVAMENTE LA LISTA CARGADA + FILA TOTAL) ---
+            # --- 2. TABLA DE CLIENTES (USANDO EXCLUSIVAMENTE 'TOTAL LINEA') ---
             tabla_clis = []
-            if col_cliente in df_base.columns:
+            if col_cliente and col_cliente in df_base.columns:
                 lista_cli_custom = []
                 if 'df_clientes_custom' in st.session_state and not st.session_state['df_clientes_custom'].empty:
                     df_cc = st.session_state['df_clientes_custom']
@@ -414,12 +441,11 @@ def render_modulo_informe(df_global):
                         tabla_clis.append({"CLIENTE": str(c), "v_act_num": va, "v_p2_num": vp2, "v_p3_num": vp3})
                     tabla_clis = sorted(tabla_clis, key=lambda x: x["v_act_num"], reverse=True)
 
-                # Fila de TOTAL CLIENTES
+                # Fila TOTAL CLIENTES
                 tot_cli_act = sum(x["v_act_num"] for x in tabla_clis)
                 tot_cli_p2 = sum(x["v_p2_num"] for x in tabla_clis)
                 tot_cli_p3 = sum(x["v_p3_num"] for x in tabla_clis)
 
-                # Formatear números a string con $
                 for item in tabla_clis:
                     item["v_act"] = f"${item['v_act_num']:,.2f}"
                     item["v_p2"] = f"${item['v_p2_num']:,.2f}"
@@ -437,7 +463,7 @@ def render_modulo_informe(df_global):
             head_b_prev = f"VENTA {cfg_b['previo']} {anio_p3}"
 
             buf_grafica = generar_grafica_comparativa([head_b_act, head_b_ant_anio, head_b_prev], [v_act, v_p2, v_p3])
-            txt_analisis, aspectos_lista, txt_cierre = generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, col_prov, nom_b_act, nom_b_prev, anio_sel)
+            txt_analisis, aspectos_lista, txt_cierre = generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, col_prov, nom_b_act, nom_b_prev, anio_sel, col_val)
 
             path_template = "templates/BIMENSUAL MAY-JUN.docx"
 
