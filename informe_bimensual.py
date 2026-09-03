@@ -73,7 +73,7 @@ def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, df_p3, nom_b_act, nom_
     tend_anio = "un crecimiento" if var_vs_anio >= 0 else "un decrecimiento"
     tend_bim = "un incremento" if var_vs_bim >= 0 else "una disminución"
 
-    # --- ANÁLISIS DE INSUMOS/PRODUCTOS CON NOMBRE Y PORCENTAJE ---
+    # --- ANÁLISIS DE LA COLUMNA DESCRIPCION (3 A 4 TOP CRECIMIENTOS Y 3 A 4 TOP CAÍDAS) ---
     col_desc = None
     for c in ["DESCRIPCION", "DESCRIPCIÓN", "PRODUCTO", "CONCEPTO", "LINEA"]:
         if c in df_p1.columns:
@@ -85,6 +85,7 @@ def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, df_p3, nom_b_act, nom_
     texto_insumos = ""
 
     if col_desc:
+        # Agrupar sobre el dataframe que ya tiene aplicados los filtros de fecha, tipo doc, vendedor y clientes
         v_p1_prod = df_p1.groupby(col_desc)[col_val].sum() if not df_p1.empty else pd.Series(dtype=float)
         v_p3_prod = df_p3.groupby(col_desc)[col_val].sum() if not df_p3.empty else pd.Series(dtype=float)
 
@@ -107,8 +108,9 @@ def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, df_p3, nom_b_act, nom_
         df_diff = pd.DataFrame(diff_list)
 
         if not df_diff.empty:
-            subieron = df_diff[df_diff["diff"] > 0].sort_values(by="diff", ascending=False).head(5)
-            bajaron = df_diff[df_diff["diff"] < 0].sort_values(by="diff", ascending=True).head(5)
+            # Seleccionar estrictamente los 3 o 4 principales
+            subieron = df_diff[df_diff["diff"] > 0].sort_values(by="diff", ascending=False).head(3)
+            bajaron = df_diff[df_diff["diff"] < 0].sort_values(by="diff", ascending=True).head(3)
 
             if not subieron.empty:
                 prod_subieron_str = ", ".join([
@@ -122,11 +124,11 @@ def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, df_p3, nom_b_act, nom_
                 ])
 
             if prod_subieron_str or prod_bajaron_str:
-                texto_insumos = " En cuanto a los productos principales: "
+                texto_insumos = " En cuanto a los productos principales de la columna descripción: "
                 if prod_subieron_str:
-                    texto_insumos += f"se destacaron por un incremento en ventas {prod_subieron_str}."
+                    texto_insumos += f"se destacan por un importante crecimiento en ventas {prod_subieron_str}."
                 if prod_bajaron_str:
-                    texto_insumos += f" Por el contrario, se registraron caídas significativas en {prod_bajaron_str}."
+                    texto_insumos += f" Por otro lado, los productos con mayor reducción en ventas fueron {prod_bajaron_str}."
 
     texto_analisis = (
         f"Durante el período {nom_b_act} de {anio_actual}, se alcanzaron ventas totales netas de ${v_act:,.2f}. "
@@ -149,14 +151,14 @@ def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, df_p3, nom_b_act, nom_
     cli_3 = str(top_clis[2]) if len(top_clis) > 2 else "otros clientes estratégicos"
 
     desc_insumos_aspecto = (
-        f"Se requiere dinamizar las ventas en los productos que mostraron contracciones significativas "
-        f"({prod_bajaron_str if prod_bajaron_str else 'productos con reducción'}) "
-        f"y fortalecer la disponibilidad e impulso comercial de aquellos con variaciones positivas "
+        f"Se debe dinamizar la rotación e implementar estrategias comerciales específicas para los 3 a 4 productos que mostraron mayor caída "
+        f"({prod_bajaron_str if prod_bajaron_str else 'productos con reducción'}), "
+        f"y a su vez asegurar el abastecimiento y potenciar la demanda de los productos clave que lideraron el crecimiento "
         f"({prod_subieron_str if prod_subieron_str else 'productos en crecimiento'})."
     )
 
     aspectos = [
-        {"titulo": "Análisis y gestión de demanda por líneas e insumos con variación", "descripcion": desc_insumos_aspecto},
+        {"titulo": "Análisis y gestión de demanda por líneas e insumos con mayor variación", "descripcion": desc_insumos_aspecto},
         {"titulo": "Recuperación de negocios pendientes y mayor seguimiento comercial", "descripcion": f"Se requiere fortalecer el seguimiento a clientes con procesos de compra pendientes como {cli_1} y {cli_2}, estableciendo fechas de compromiso y realizando un acompañamiento más cercano con las áreas técnicas y de compras."},
         {"titulo": "Mejorar la disponibilidad de inventario en productos estratégicos", "descripcion": "Algunos negocios se vieron afectados por retrasos derivados del desabastecimiento de productos de alta rotación, principalmente sabores, estándares de crioscopio y otros insumos especializados."},
         {"titulo": "Incrementar la participación de las líneas CHARM y productos de mayor rentabilidad", "descripcion": f"Existe una oportunidad importante para fortalecer la comercialización de productos como lactasa, hisopos de luminometria, GMP y demás soluciones CHARM, aprovechando la cartera activa de {cli_3}."},
@@ -220,13 +222,11 @@ def dar_formato_tabla(table, col_widths, headers, rows_data):
                 row_cells[c_idx]._tc.get_or_add_tcPr().append(shading)
 
 def construir_documento_word(contexto, path_template=None):
-    # Abrir el documento base respetando margenes, marcas de agua, encabezados y pies de página exactamente como existen
     if path_template and os.path.exists(path_template):
         doc = Document(path_template)
     else:
         doc = Document()
 
-    # Título Principal
     p_title = doc.add_paragraph()
     p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     r_title = p_title.add_run(contexto["titulo_informe"])
@@ -234,7 +234,6 @@ def construir_documento_word(contexto, path_template=None):
     r_title.font.size = Pt(16)
     r_title.font.color.rgb = RGBColor(31, 78, 120)
 
-    # Responsable
     p_sub = doc.add_paragraph()
     p_sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
     r_sub = p_sub.add_run(f"Responsable Comercial: {contexto['vendedor']} | Año: {contexto['anio']}")
@@ -242,8 +241,6 @@ def construir_documento_word(contexto, path_template=None):
     r_sub.font.size = Pt(11)
 
     doc.add_paragraph()
-
-    # --- ESTRUCTURA SOLICITADA ---
 
     # 1. TABLA 1: Resumen por Línea / Fabricante
     h1 = doc.add_paragraph()
@@ -399,6 +396,10 @@ def render_modulo_informe(df_global):
             nom_b_act = cfg_b["nombre"]
             nom_b_prev = MAPA_BIMESTRES[cfg_b["previo"]]["nombre"]
 
+            # --- FILTRADO POR VENDEDOR SI APLICA ---
+            if col_vendedor in df_base.columns and vendedor_sel != "Todos":
+                df_base = df_base[df_base[col_vendedor] == vendedor_sel]
+
             # --- FILTRADO DE CADA PERÍODO ---
             df_p1_base = df_base[(df_base["AÑO"] == anio_sel) & (df_base["MES"].isin(cfg_b["meses"]))]
             if col_tipo_doc:
@@ -530,7 +531,7 @@ def render_modulo_informe(df_global):
             # --- GRÁFICA DE FABRICANTES ---
             buf_grafica = generar_grafica_comparativa_fabricantes([head_b_act, head_b_ant_anio, head_b_prev], [tot_fab_act, tot_fab_p2, tot_fab_p3])
             
-            # --- ANÁLISIS COMERCIAL CON PRODUCTOS DE DESCRIPCION ---
+            # --- ANÁLISIS COMERCIAL CON TOP 3 PRODUCTOS QUE SUBIERON Y CAYERON ---
             txt_analisis, aspectos_lista, txt_cierre = generar_analisis_y_aspectos(
                 tot_fab_act, tot_fab_p2, tot_fab_p3, df_p1, df_p3, nom_b_act, nom_b_prev, anio_sel, col_val
             )
@@ -560,7 +561,7 @@ def render_modulo_informe(df_global):
                 doc.save(output_buf)
                 output_buf.seek(0)
 
-                st.success("✅ Informe generado correctamente con la plantilla original.")
+                st.success("✅ Informe generado correctamente.")
                 st.download_button(
                     label="📥 Descargar Informe Word (.docx)",
                     data=output_buf,
