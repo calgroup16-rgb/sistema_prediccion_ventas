@@ -16,6 +16,33 @@ MAPA_BIMESTRES = {
     "B6": {"nombre": "B6 (Nov - Dic)", "texto_titulo": "Noviembre - Diciembre", "meses": [11, 12], "previo": "B5", "meses_prev": [9, 10]},
 }
 
+def normalizar_columnas_df(df):
+    """Estandariza los nombres de columnas para evitar KeyError independientemente de la fuente del Excel."""
+    if df is None or df.empty:
+        return df
+
+    df = df.copy()
+    col_map = {}
+    for col in df.columns:
+        c_upper = str(col).strip().upper()
+        if c_upper in ["VENDEDOR", "RESPONSABLE", "ASESOR", "VENDEDOR/RESPONSABLE"]:
+            col_map[col] = "VENDEDOR"
+        elif c_upper in ["CLIENTE", "NOMBRE_CLIENTE", "NOMBRE CLIENTE", "TERCERO"]:
+            col_map[col] = "CLIENTE"
+        elif c_upper in ["PROVEEDOR", "FABRICANTE", "MARCA"]:
+            col_map[col] = "PROVEEDOR"
+        elif c_upper in ["AÑO", "ANIO", "YEAR"]:
+            col_map[col] = "AÑO"
+        elif c_upper in ["MES", "MONTH"]:
+            col_map[col] = "MES"
+        elif c_upper in ["VALOR_VENTA", "VALOR", "VENTA", "TOTAL", "VALOR VENTA"]:
+            col_map[col] = "VALOR_VENTA"
+        elif c_upper in ["TIPO_DOCUMENTO", "TIPO_DOC", "DOCUMENTO", "TIPO"]:
+            col_map[col] = "TIPO_DOCUMENTO"
+
+    df.rename(columns=col_map, inplace=True)
+    return df
+
 def generar_grafica_comparativa(labels, valores_totales):
     fig, ax = plt.subplots(figsize=(6.5, 3.5))
     colores = ['#1f77b4', '#ff7f0e', '#2ca02c']
@@ -42,8 +69,7 @@ def generar_grafica_comparativa(labels, valores_totales):
     plt.close(fig)
     return img_buf
 
-
-def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, col_prov, nom_b_act, nom_b_prev, anio_actual):
+def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, nom_b_act, nom_b_prev, anio_actual):
     var_vs_anio = ((v_act - v_p2) / v_p2 * 100) if v_p2 > 0 else 0
     var_vs_bim = ((v_act - v_p3) / v_p3 * 100) if v_p3 > 0 else 0
 
@@ -54,119 +80,93 @@ def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, col_prov, nom_b_act, n
         f"Durante el período {nom_b_act} de {anio_actual}, se alcanzaron ventas totales de ${v_act:,.2f}. "
         f"Al comparar este resultado con el mismo período del año anterior ({nom_b_act} {anio_actual-1}), "
         f"se evidencia {tend_anio} del {abs(var_vs_anio):.2f}% (frente a ${v_p2:,.2f}). "
-        f"Por otra parte, en relación con el comportamiento del bimestre inmediatamente anterior ({nom_b_prev}), se registró "
+        f"Por otra parte, en relación con el bimestre inmediatamente anterior ({nom_b_prev}), el comportamiento registró "
         f"{tend_bim} del {abs(var_vs_bim):.2f}% respecto a los ${v_p3:,.2f} facturados previamente."
     )
 
-    col_val = "VALOR_VENTA" if "VALOR_VENTA" in df_p1.columns else "VALOR"
-    top_clis = df_p1.groupby("CLIENTE")[col_val].sum().sort_values(ascending=False).index.tolist() if "CLIENTE" in df_p1.columns and not df_p1.empty else []
+    top_clis = df_p1.groupby("CLIENTE")["VALOR_VENTA"].sum().sort_values(ascending=False).index.tolist() if "CLIENTE" in df_p1.columns and not df_p1.empty else []
     cli_1 = str(top_clis[0]) if len(top_clis) > 0 else "cuentas principales"
     cli_2 = str(top_clis[1]) if len(top_clis) > 1 else "cuentas secundarias"
     cli_3 = str(top_clis[2]) if len(top_clis) > 2 else "otros clientes estratégicos"
 
     aspectos = [
-        {
-            "titulo": "Recuperación de negocios pendientes y mayor seguimiento comercial",
-            "descripcion": f"Se requiere fortalecer el seguimiento a clientes con procesos de compra pendientes como {cli_1} y {cli_2}, estableciendo fechas de compromiso y realizando un acompañamiento más cercano con las áreas técnicas y de compras. El objetivo es reducir los tiempos de decisión y convertir las oportunidades identificadas en ventas efectivas."
-        },
-        {
-            "titulo": "Mejorar la disponibilidad de inventario en productos estratégicos",
-            "descripcion": "Algunos negocios se vieron afectados por retrasos derivados del desabastecimiento de productos de alta rotación, principalmente sabores, estándares de crioscopio y otros insumos especializados. Es importante trabajar junto con logística y abastecimiento para garantizar inventarios oportunos que permitan atender las órdenes sin afectar la confianza del cliente."
-        },
-        {
-            "titulo": "Incrementar la participación de las líneas CHARM y productos de mayor rentabilidad",
-            "descripcion": f"Existe una oportunidad importante para fortalecer la comercialización de productos como lactasa, hisopos de luminometria, GMP y demás soluciones CHARM, aprovechando la cartera activa de {cli_3} y desarrollando nuevas oportunidades comerciales mediante demostraciones, pruebas de desempeño y visitas técnicas."
-        },
-        {
-            "titulo": "Recuperación de clientes y productos con disminución en ventas",
-            "descripcion": "Se evidencian reducciones en la compra de algunos productos representativos dentro del portafolio. Es necesario identificar las causas de la disminución, presentar alternativas comerciales y ampliar la oferta de soluciones para recuperar el nivel de facturación."
-        },
-        {
-            "titulo": "Aumentar la venta cruzada en clientes activos",
-            "descripcion": "Clientes con compras recurrentes representan una oportunidad constante para incrementar la participación mediante la incorporación de nuevas líneas de negocio, equipos en comodato, insumos para laboratorio y soluciones de control de calidad."
-        },
-        {
-            "titulo": "Fortalecer la planeación comercial con clientes estratégicos",
-            "descripcion": "Promover que los clientes compartan sus proyecciones mensuales o trimestrales de consumo permitirá mejorar la planeación de inventarios, anticipar necesidades y ofrecer un mejor nivel de servicio, reduciendo riesgos de desabastecimiento y aumentando la fidelización."
-        },
-        {
-            "titulo": "Continuar la recuperación de cuentas con alto potencial",
-            "descripcion": "Se continuará con las gestiones comerciales para recuperar clientes y líneas de negocio que presentan oportunidades de crecimiento, como la reactivación de compras de lactasa, la implementación de hisopos de luminometría y el cierre de propuestas de equipos en comodato."
-        },
-        {
-            "titulo": "Optimización de la gestión de cartera y recaudo oportuno",
-            "descripcion": "Monitorear semanalmente la conversión de facturación a cartera efectiva para asegurar el flujo de caja sin frenar la colocación de nuevos pedidos en el siguiente período."
-        }
+        {"titulo": "Recuperación de negocios pendientes", "descripcion": f"Se requiere fortalecer el seguimiento a clientes con procesos pendientes como {cli_1} y {cli_2}."},
+        {"titulo": "Mejorar disponibilidad de inventario", "descripcion": "Garantizar inventarios oportunos en productos de alta rotación para evitar retrasos."},
+        {"titulo": "Incrementar líneas de alta rentabilidad", "descripcion": f"Aprovechar la cartera activa de {cli_3} para impulsar productos estratégicos."},
+        {"titulo": "Recuperación de clientes con baja en ventas", "descripcion": "Identificar causas de disminución de compra y presentar alternativas comerciales."},
+        {"titulo": "Aumentar venta cruzada", "descripcion": "Incorporar nuevas líneas de negocio e insumos en clientes recurrentes."},
+        {"titulo": "Planeación comercial", "descripcion": "Promover que los clientes compartan proyecciones para anticipar necesidades de abastecimiento."},
+        {"titulo": "Cuentas con alto potencial", "descripcion": "Continuar gestiones para reactivación de clientes clave y proyectos en comodato."},
+        {"titulo": "Gestión de cartera", "descripcion": "Monitorear semanalmente la conversión a cartera efectiva para asegurar flujo de caja."}
     ]
 
-    texto_cierre = (
-        "De acuerdo con la revisión, es importante potenciar la venta de productos como lactasa, hisopos, GMP "
-        "y en general las líneas de negocio de CHARM. Se continuará impulsando las ofertas de equipos en comodato "
-        "con clientes clave para consolidar los cierres comerciales durante el próximo bimestre."
-    )
-
+    texto_cierre = "De acuerdo con la revisión, es importante potenciar la venta de las líneas principales y consolidar los cierres comerciales del próximo bimestre."
     return texto_analisis, aspectos, texto_cierre
-
 
 def render_modulo_informe(df_global):
     st.title("📄 Generador de Informe Bimensual")
 
-    # --- PESTAÑAS Y CARGA DE ARCHIVOS ADICIONALES ---
-    tab_gen, tab_clientes, tab_fabricantes = st.tabs(["🚀 Generar Informe", "📋 Cargar Lista Clientes", "🏭 Cargar Lista Fabricantes"])
+    if df_global is None or df_global.empty:
+        st.warning("⚠️ Primero debe cargar los datos de ventas en la aplicación.")
+        return
 
-    # Pestaña Cargar Clientes
+    # Normalizar DataFrame para garantizar columnas sin KeyError
+    df_global = normalizar_columnas_df(df_global)
+
+    # Filtrado exclusivo por Facturas
+    if "TIPO_DOCUMENTO" in df_global.columns:
+        df_global = df_global[df_global["TIPO_DOCUMENTO"].astype(str).str.upper().str.contains("FACTURA", na=False)]
+
+    # Validación de columnas requeridas
+    columnas_requeridas = ["VENDEDOR", "AÑO", "MES", "VALOR_VENTA"]
+    columnas_faltantes = [c for c in columnas_requeridas if c not in df_global.columns]
+    if columnas_faltantes:
+        st.error(f"❌ El archivo de ventas no contiene las columnas necesarias: {', '.join(columnas_faltantes)}")
+        return
+
+    # PESTAÑAS ORIGINALES DEL MÓDULO
+    tab_gen, tab_clientes, tab_fabricantes = st.tabs(["🚀 Configuración & Generación", "📋 Selección / Cargar Clientes", "🏭 Selección / Cargar Fabricantes"])
+
     with tab_clientes:
-        st.subheader("Cargar Archivo de Clientes")
-        file_cli = st.file_uploader("Cargue la lista de clientes (Excel/CSV):", type=["xlsx", "xls", "csv"], key="file_cli_inf")
+        st.subheader("Filtro por Clientes")
+        clis_disponibles = sorted(df_global["CLIENTE"].dropna().unique()) if "CLIENTE" in df_global.columns else []
+        clis_seleccionados = st.multiselect("Filtrar por clientes específicos (Dejar vacío para incluir todos):", clis_disponibles)
+        
+        file_cli = st.file_uploader("O cargue un archivo de clientes específicos (Excel/CSV):", type=["xlsx", "xls", "csv"], key="file_cli_inf")
         if file_cli:
             try:
                 df_c = pd.read_excel(file_cli) if file_cli.name.endswith(('.xlsx', '.xls')) else pd.read_csv(file_cli)
                 st.session_state['df_clientes_custom'] = df_c
-                st.success("✅ Lista de clientes cargada correctamente.")
-                st.dataframe(df_c.head())
+                st.success("✅ Archivo de clientes cargado.")
             except Exception as e:
                 st.error(f"Error al leer archivo de clientes: {e}")
 
-    # Pestaña Cargar Fabricantes
     with tab_fabricantes:
-        st.subheader("Cargar Archivo de Fabricantes / Proveedores")
-        file_fab = st.file_uploader("Cargue la lista de fabricantes (Excel/CSV):", type=["xlsx", "xls", "csv"], key="file_fab_inf")
+        st.subheader("Filtro por Fabricantes / Proveedores")
+        fabs_disponibles = sorted(df_global["PROVEEDOR"].dropna().unique()) if "PROVEEDOR" in df_global.columns else []
+        fabs_seleccionados = st.multiselect("Filtrar por fabricantes específicos (Dejar vacío para incluir todos):", fabs_disponibles)
+
+        file_fab = st.file_uploader("O cargue un archivo de fabricantes específicos (Excel/CSV):", type=["xlsx", "xls", "csv"], key="file_fab_inf")
         if file_fab:
             try:
                 df_f = pd.read_excel(file_fab) if file_fab.name.endswith(('.xlsx', '.xls')) else pd.read_csv(file_fab)
                 st.session_state['df_fabricantes_custom'] = df_f
-                st.success("✅ Lista de fabricantes cargada correctamente.")
-                st.dataframe(df_f.head())
+                st.success("✅ Archivo de fabricantes cargado.")
             except Exception as e:
                 st.error(f"Error al leer archivo de fabricantes: {e}")
 
-    # Pestaña Principal
     with tab_gen:
-        if df_global is None or df_global.empty:
-            st.warning("⚠️ Primero debe cargar los datos de ventas en la aplicación.")
-            return
-
-        # FILTRAR ÚNICAMENTE FACTURAS
-        col_tipo_doc = None
-        for col in ["TIPO_DOCUMENTO", "TIPO_DOC", "DOCUMENTO", "TIPO"]:
-            if col in df_global.columns:
-                col_tipo_doc = col
-                break
-
-        if col_tipo_doc:
-            # Filtrado estricto por solo facturas
-            df_global = df_global[df_global[col_tipo_doc].astype(str).str.upper().str.contains("FACTURA", na=False)]
-
         st.subheader("Configuración del Informe")
         col1, col2, col3 = st.columns(3)
 
+        vendedores = sorted(df_global["VENDEDOR"].dropna().unique())
         with col1:
-            vendedor_sel = st.selectbox("Seleccione el Vendedor/Responsable:", sorted(df_global["VENDEDOR"].dropna().unique()))
+            vendedor_sel = st.selectbox("Seleccione el Vendedor/Responsable:", vendedores)
         with col2:
             bim_sel = st.selectbox("Seleccione el Bimestre del Informe:", list(MAPA_BIMESTRES.keys()), format_func=lambda x: MAPA_BIMESTRES[x]["nombre"])
         with col3:
-            anios_disponibles = sorted(df_global["AÑO"].dropna().unique(), reverse=True)
-            anio_sel = st.selectbox("Seleccione el Año Actual:", anios_disponibles)
+            anios = sorted(df_global["AÑO"].dropna().unique(), reverse=True)
+            anio_sel = st.selectbox("Seleccione el Año Actual:", anios)
 
         if st.button("🚀 Generar Informe Bimensual"):
             cfg_b = MAPA_BIMESTRES[bim_sel]
@@ -174,69 +174,57 @@ def render_modulo_informe(df_global):
             nom_b_prev = MAPA_BIMESTRES[cfg_b["previo"]]["nombre"]
 
             df_vend = df_global[df_global["VENDEDOR"] == vendedor_sel]
-            
+
+            # Aplicar filtros si fueron seleccionados en las pestañas
+            if clis_seleccionados and "CLIENTE" in df_vend.columns:
+                df_vend = df_vend[df_vend["CLIENTE"].isin(clis_seleccionados)]
+            if fabs_seleccionados and "PROVEEDOR" in df_vend.columns:
+                df_vend = df_vend[df_vend["PROVEEDOR"].isin(fabs_seleccionados)]
+
             df_p1 = df_vend[(df_vend["AÑO"] == anio_sel) & (df_vend["MES"].isin(cfg_b["meses"]))]
             df_p2 = df_vend[(df_vend["AÑO"] == (anio_sel - 1)) & (df_vend["MES"].isin(cfg_b["meses"]))]
             
             anio_p3 = anio_sel if bim_sel != "B1" else (anio_sel - 1)
             df_p3 = df_vend[(df_vend["AÑO"] == anio_p3) & (df_vend["MES"].isin(cfg_b["meses_prev"]))]
 
-            col_val = "VALOR_VENTA" if "VALOR_VENTA" in df_global.columns else "VALOR"
-            v_act = float(df_p1[col_val].sum()) if not df_p1.empty else 0.0
-            v_p2 = float(df_p2[col_val].sum()) if not df_p2.empty else 0.0
-            v_p3 = float(df_p3[col_val].sum()) if not df_p3.empty else 0.0
+            v_act = float(df_p1["VALOR_VENTA"].sum()) if not df_p1.empty else 0.0
+            v_p2 = float(df_p2["VALOR_VENTA"].sum()) if not df_p2.empty else 0.0
+            v_p3 = float(df_p3["VALOR_VENTA"].sum()) if not df_p3.empty else 0.0
 
-            col_prov = "PROVEEDOR" if "PROVEEDOR" in df_global.columns else ("FABRICANTE" if "FABRICANTE" in df_global.columns else "PROVEEDOR")
-
-            provs = set(df_p1[col_prov].dropna()).union(df_p2[col_prov].dropna()).union(df_p3[col_prov].dropna()) if col_prov in df_global.columns else set()
+            # Tabla Proveedores
             tabla_provs = []
-            for p in provs:
-                va = float(df_p1[df_p1[col_prov] == p][col_val].sum()) if not df_p1.empty else 0.0
-                vp2 = float(df_p2[df_p2[col_prov] == p][col_val].sum()) if not df_p2.empty else 0.0
-                vp3 = float(df_p3[df_p3[col_prov] == p][col_val].sum()) if not df_p3.empty else 0.0
-                tabla_provs.append({
-                    "PROVEEDOR": str(p),
-                    "v_act": f"${va:,.2f}",
-                    "v_p2": f"${vp2:,.2f}",
-                    "v_p3": f"${vp3:,.2f}",
-                    "raw_val": va
-                })
-            tabla_provs = sorted(tabla_provs, key=lambda x: x["raw_val"], reverse=True)
+            if "PROVEEDOR" in df_vend.columns:
+                provs = set(df_p1["PROVEEDOR"].dropna()).union(df_p2["PROVEEDOR"].dropna()).union(df_p3["PROVEEDOR"].dropna())
+                for p in provs:
+                    va = float(df_p1[df_p1["PROVEEDOR"] == p]["VALOR_VENTA"].sum()) if not df_p1.empty else 0.0
+                    vp2 = float(df_p2[df_p2["PROVEEDOR"] == p]["VALOR_VENTA"].sum()) if not df_p2.empty else 0.0
+                    vp3 = float(df_p3[df_p3["PROVEEDOR"] == p]["VALOR_VENTA"].sum()) if not df_p3.empty else 0.0
+                    tabla_provs.append({"PROVEEDOR": str(p), "v_act": f"${va:,.2f}", "v_p2": f"${vp2:,.2f}", "v_p3": f"${vp3:,.2f}", "raw_val": va})
+                tabla_provs = sorted(tabla_provs, key=lambda x: x["raw_val"], reverse=True)
 
-            clis = set(df_p1["CLIENTE"].dropna()).union(df_p2["CLIENTE"].dropna()).union(df_p3["CLIENTE"].dropna()) if "CLIENTE" in df_global.columns else set()
+            # Tabla Clientes
             tabla_clis = []
-            for c in clis:
-                va = float(df_p1[df_p1["CLIENTE"] == c][col_val].sum()) if not df_p1.empty else 0.0
-                vp2 = float(df_p2[df_p2["CLIENTE"] == c][col_val].sum()) if not df_p2.empty else 0.0
-                vp3 = float(df_p3[df_p3["CLIENTE"] == c][col_val].sum()) if not df_p3.empty else 0.0
-                tabla_clis.append({
-                    "CLIENTE": str(c),
-                    "v_act": f"${va:,.2f}",
-                    "v_p2": f"${vp2:,.2f}",
-                    "v_p3": f"${vp3:,.2f}",
-                    "raw_val": va
-                })
-            tabla_clis = sorted(tabla_clis, key=lambda x: x["raw_val"], reverse=True)
+            if "CLIENTE" in df_vend.columns:
+                clis = set(df_p1["CLIENTE"].dropna()).union(df_p2["CLIENTE"].dropna()).union(df_p3["CLIENTE"].dropna())
+                for c in clis:
+                    va = float(df_p1[df_p1["CLIENTE"] == c]["VALOR_VENTA"].sum()) if not df_p1.empty else 0.0
+                    vp2 = float(df_p2[df_p2["CLIENTE"] == c]["VALOR_VENTA"].sum()) if not df_p2.empty else 0.0
+                    vp3 = float(df_p3[df_p3["CLIENTE"] == c]["VALOR_VENTA"].sum()) if not df_p3.empty else 0.0
+                    tabla_clis.append({"CLIENTE": str(c), "v_act": f"${va:,.2f}", "v_p2": f"${vp2:,.2f}", "v_p3": f"${vp3:,.2f}", "raw_val": va})
+                tabla_clis = sorted(tabla_clis, key=lambda x: x["raw_val"], reverse=True)
 
             head_b_act = f"VENTA {bim_sel} {anio_sel}"
             head_b_ant_anio = f"VENTA {bim_sel} {anio_sel-1}"
             head_b_prev = f"VENTA {cfg_b['previo']} {anio_p3}"
 
-            buf_grafica = generar_grafica_comparativa(
-                [head_b_act, head_b_ant_anio, head_b_prev],
-                [v_act, v_p2, v_p3]
-            )
-
-            txt_analisis, aspectos_lista, txt_cierre = generar_analisis_y_aspectos(
-                v_act, v_p2, v_p3, df_p1, col_prov, nom_b_act, nom_b_prev, anio_sel
-            )
+            buf_grafica = generar_grafica_comparativa([head_b_act, head_b_ant_anio, head_b_prev], [v_act, v_p2, v_p3])
+            txt_analisis, aspectos_lista, txt_cierre = generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, nom_b_act, nom_b_prev, anio_sel)
 
             path_template = "templates/BIMENSUAL MAY-JUN.docx"
             if not os.path.exists(path_template):
-                st.error(f"❌ No se encontró la plantilla en {path_template}")
+                st.error(f"❌ No se encontró la plantilla Word en {path_template}")
                 return
 
-            # Carga segura mediante stream de bytes para evitar problemas de bloqueo de archivo Word
             with open(path_template, "rb") as f:
                 template_bytes = io.BytesIO(f.read())
 
@@ -278,4 +266,4 @@ def render_modulo_informe(df_global):
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 )
             except Exception as err:
-                st.error(f"⚠️ Error al renderizar la plantilla Word con Jinja2: {err}")
+                st.error(f"⚠️ Error al renderizar plantilla Word: {err}")
