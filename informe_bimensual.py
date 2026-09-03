@@ -40,26 +40,28 @@ def preparar_dataframe(df):
 
     return df
 
-def aplicar_filtro_documentos_y_netear(df, col_tipo_doc, col_val):
+def netear_notas_credito(df, col_val):
     """
-    Filtra facturas y notas crédito, asegurando que las Notas Crédito
-    descuenten/resten del valor total de la venta.
+    Aplica el descuento de notas crédito respetando todos los registros originales.
+    Si el documento es Nota Crédito / NC, invierte su valor a negativo para descontar.
     """
-    if df.empty or not col_tipo_doc or not col_val:
+    if df.empty or not col_val:
         return df
 
-    # Filtrar solo documentos válidos (Facturas y Notas Crédito/Débito)
-    patron = "FACTURA|NOTA|NC|ND"
-    df_filtrado = df[df[col_tipo_doc].astype(str).str.upper().str.contains(patron, na=False)].copy()
-
-    # Si en la BD los valores de Notas Crédito vienen positivos, invertimos el signo para restar
-    es_nc = df_filtrado[col_tipo_doc].astype(str).str.upper().str.contains("NOTA|NC", na=False)
+    df_res = df.copy()
     
-    # Si la suma de las NC es positiva, significa que vienen positivas y hay que multiplicarlas por -1
-    if (df_filtrado.loc[es_nc, col_val] > 0).any():
-        df_filtrado.loc[es_nc, col_val] = -1 * df_filtrado.loc[es_nc, col_val].abs()
+    col_tipo_doc = None
+    for c in ["TIPO DOC", "TIPO_DOC", "TIPO DOCUMENTO", "DOCUMENTO", "TIPO"]:
+        if c in df_res.columns:
+            col_tipo_doc = c
+            break
 
-    return df_filtrado
+    if col_tipo_doc:
+        es_nc = df_res[col_tipo_doc].astype(str).str.upper().str.contains("NOTA|NC|CREDITO|CRÉDITO", na=False)
+        # Si la nota crédito viene con valor positivo, la multiplicamos por -1 para restar
+        df_res.loc[es_nc & (df_res[col_val] > 0), col_val] = -1 * df_res.loc[es_nc & (df_res[col_val] > 0), col_val]
+
+    return df_res
 
 def generar_grafica_comparativa_fabricantes(labels, valores_totales):
     fig, ax = plt.subplots(figsize=(6.5, 3.5))
@@ -150,7 +152,7 @@ def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, df_p3, nom_b_act, nom_
                     texto_insumos += f" Por otro lado, los productos con mayor reducción en ventas fueron {prod_bajaron_str}."
 
     texto_analisis = (
-        f"Durante el período {nom_b_act} de {anio_actual}, se alcanzaron ventas totales netas de ${v_act:,.2f} (descontando notas crédito). "
+        f"Durante el período {nom_b_act} de {anio_actual}, se alcanzaron ventas totales netas de ${v_act:,.2f}. "
         f"Al comparar este resultado con el mismo período del año anterior ({nom_b_act} {anio_actual-1}), "
         f"se evidencia {tend_anio} del {abs(var_vs_anio):.2f}% (frente a ${v_p2:,.2f}). "
         f"Asimismo, en relación con el bimestre inmediatamente anterior ({nom_b_prev}), se registró "
@@ -170,7 +172,7 @@ def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, df_p3, nom_b_act, nom_
     cli_3 = str(top_clis[2]) if len(top_clis) > 2 else "otros clientes estratégicos"
 
     desc_insumos_aspecto = (
-        f"Se debe dinamizar la rotación e implementar estrategias comerciales específicas para los 3 a 4 productos que mostraron mayor caída "
+        f"Se debe dinamizar la rotación e implementar estrategias comerciales específicas para los productos que mostraron mayor caída "
         f"({prod_bajaron_str if prod_bajaron_str else 'productos con reducción'}), "
         f"y a su vez asegurar el abastecimiento y potenciar la demanda de los productos clave que lideraron el crecimiento "
         f"({prod_subieron_str if prod_subieron_str else 'productos en crecimiento'})."
@@ -364,12 +366,6 @@ def render_modulo_informe(df_global):
                 st.error(f"Error al leer archivo de fabricantes: {e}")
 
     with tab_gen:
-        col_tipo_doc = None
-        for col in ["TIPO DOC", "TIPO_DOC", "TIPO DOCUMENTO", "DOCUMENTO", "TIPO"]:
-            if col in df_global.columns:
-                col_tipo_doc = col
-                break
-
         df_base = df_global.copy()
 
         col_val = None
@@ -413,20 +409,21 @@ def render_modulo_informe(df_global):
             nom_b_act = cfg_b["nombre"]
             nom_b_prev = MAPA_BIMESTRES[cfg_b["previo"]]["nombre"]
 
-            # --- FILTRADO POR VENDEDOR SI APLICA ---
+            # --- FILTRADO ORIGINAL EXACTO POR VENDEDOR ---
             if col_vendedor in df_base.columns and vendedor_sel != "Todos":
                 df_base = df_base[df_base[col_vendedor] == vendedor_sel]
 
-            # --- FILTRADO POR FECHA Y DESCUENTO DE NOTAS CRÉDITO PARA TODOS LOS BIMESTRES ---
+            # --- LÓGICA DE FECHAS EXACTA QUE YA TE FUNCIONABA ---
             df_p1_raw = df_base[(df_base["AÑO"] == anio_sel) & (df_base["MES"].isin(cfg_b["meses"]))]
-            df_p1_base = aplicar_filtro_documentos_y_netear(df_p1_raw, col_tipo_doc, col_val)
-
             df_p2_raw = df_base[(df_base["AÑO"] == (anio_sel - 1)) & (df_base["MES"].isin(cfg_b["meses"]))]
-            df_p2_base = aplicar_filtro_documentos_y_netear(df_p2_raw, col_tipo_doc, col_val)
-
+            
             anio_p3 = anio_sel if bim_sel != "B1" else (anio_sel - 1)
             df_p3_raw = df_base[(df_base["AÑO"] == anio_p3) & (df_base["MES"].isin(cfg_b["meses_prev"]))]
-            df_p3_base = aplicar_filtro_documentos_y_netear(df_p3_raw, col_tipo_doc, col_val)
+
+            # Se aplica el neteo de notas crédito de forma transparente sin descartar filas
+            df_p1_base = netear_notas_credito(df_p1_raw, col_val)
+            df_p2_base = netear_notas_credito(df_p2_raw, col_val)
+            df_p3_base = netear_notas_credito(df_p3_raw, col_val)
 
             # Lista personalizada de clientes
             lista_cli_custom = []
@@ -573,7 +570,7 @@ def render_modulo_informe(df_global):
                 doc.save(output_buf)
                 output_buf.seek(0)
 
-                st.success("✅ Informe generado correctamente con ventas netas (notas crédito descontadas).")
+                st.success("✅ Informe generado correctamente recuperando todos los períodos.")
                 st.download_button(
                     label="📥 Descargar Informe Word (.docx)",
                     data=output_buf,
