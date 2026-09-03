@@ -66,12 +66,54 @@ def generar_grafica_comparativa(labels, valores_totales):
     plt.close(fig)
     return img_buf
 
-def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, nom_b_act, nom_b_prev, anio_actual, col_val):
+def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, df_p3, nom_b_act, nom_b_prev, anio_actual, col_val):
     var_vs_anio = ((v_act - v_p2) / v_p2 * 100) if v_p2 > 0 else 0
     var_vs_bim = ((v_act - v_p3) / v_p3 * 100) if v_p3 > 0 else 0
 
     tend_anio = "un crecimiento" if var_vs_anio >= 0 else "un decrecimiento"
     tend_bim = "un incremento" if var_vs_bim >= 0 else "una disminución"
+
+    # --- ANÁLISIS DE INSUMOS/PRODUCTOS (COLUMNA DESCRIPCION) ---
+    col_desc = None
+    for c in ["DESCRIPCION", "DESCRIPCIÓN", "PRODUCTO", "CONCEPTO", "LINEA"]:
+        if c in df_p1.columns:
+            col_desc = c
+            break
+
+    texto_insumos = ""
+    prod_subieron_str = ""
+    prod_bajaron_str = ""
+
+    if col_desc:
+        v_p1_prod = df_p1.groupby(col_desc)[col_val].sum() if not df_p1.empty else pd.Series(dtype=float)
+        v_p3_prod = df_p3.groupby(col_desc)[col_val].sum() if not df_p3.empty else pd.Series(dtype=float)
+
+        todos_prods = list(set(v_p1_prod.index).union(set(v_p3_prod.index)))
+        
+        diff_list = []
+        for p in todos_prods:
+            v_actual = v_p1_prod.get(p, 0.0)
+            v_previo = v_p3_prod.get(p, 0.0)
+            diff = v_actual - v_previo
+            diff_list.append({"producto": p, "diff": diff, "v_act": v_actual, "v_prev": v_previo})
+
+        df_diff = pd.DataFrame(diff_list)
+
+        if not df_diff.empty:
+            subieron = df_diff[df_diff["diff"] > 0].sort_values(by="diff", ascending=False).head(5)
+            bajaron = df_diff[df_diff["diff"] < 0].sort_values(by="diff", ascending=True).head(5)
+
+            if not subieron.empty:
+                prod_subieron_str = ", ".join([f"'{row['producto']}' (+${row['diff']:,.0f})" for _, row in subieron.iterrows()])
+            if not bajaron.empty:
+                prod_bajaron_str = ", ".join([f"'{row['producto']}' (-${abs(row['diff']):,.0f})" for _, row in bajaron.iterrows()])
+
+            if prod_subieron_str or prod_bajaron_str:
+                texto_insumos = " En cuanto al comportamiento de insumos y productos principales: "
+                if prod_subieron_str:
+                    texto_insumos += f"Se registraron incrementos destacados en las ventas de {prod_subieron_str}."
+                if prod_bajaron_str:
+                    texto_insumos += f" Por el contrario, se observó una reducción o contracción en productos como {prod_bajaron_str}."
 
     texto_analisis = (
         f"Durante el período {nom_b_act} de {anio_actual}, se alcanzaron ventas totales netas de clientes de ${v_act:,.2f}. "
@@ -79,6 +121,7 @@ def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, nom_b_act, nom_b_prev,
         f"se evidencia {tend_anio} del {abs(var_vs_anio):.2f}% (frente a ${v_p2:,.2f}). "
         f"Por otra parte, en relación con el comportamiento del bimestre inmediatamente anterior ({nom_b_prev}), se registró "
         f"{tend_bim} del {abs(var_vs_bim):.2f}% respecto a los ${v_p3:,.2f} facturados previamente."
+        f"{texto_insumos}"
     )
 
     col_cli = None
@@ -92,8 +135,16 @@ def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, nom_b_act, nom_b_prev,
     cli_2 = str(top_clis[1]) if len(top_clis) > 1 else "cuentas secundarias"
     cli_3 = str(top_clis[2]) if len(top_clis) > 2 else "otros clientes estratégicos"
 
+    desc_insumos_aspecto = (
+        f"Se evidencian variaciones en insumos clave respecto al bimestre anterior. "
+        f"Es necesario impulsar la rotación de los insumos que disminuyeron sus ventas"
+        f"({prod_bajaron_str if prod_bajaron_str else 'productos con contracción'}) "
+        f"y capitalizar la demanda de los insumos con mayor crecimiento ({prod_subieron_str if prod_subieron_str else 'productos en alza'})."
+    )
+
     aspectos = [
         {"titulo": "Recuperación de negocios pendientes y mayor seguimiento comercial", "descripcion": f"Se requiere fortalecer el seguimiento a clientes con procesos de compra pendientes como {cli_1} y {cli_2}, estableciendo fechas de compromiso y realizando un acompañamiento más cercano con las áreas técnicas y de compras."},
+        {"titulo": "Análisis y gestión de demanda por líneas e insumos", "descripcion": desc_insumos_aspecto},
         {"titulo": "Mejorar la disponibilidad de inventario en productos estratégicos", "descripcion": "Algunos negocios se vieron afectados por retrasos derivados del desabastecimiento de productos de alta rotación, principalmente sabores, estándares de crioscopio y otros insumos especializados."},
         {"titulo": "Incrementar la participación de las líneas CHARM y productos de mayor rentabilidad", "descripcion": f"Existe una oportunidad importante para fortalecer la comercialización de productos como lactasa, hisopos de luminometria, GMP y demás soluciones CHARM, aprovechando la cartera activa de {cli_3}."},
         {"titulo": "Recuperación de clientes y productos con disminución en ventas", "descripcion": "Se evidencian reducciones en la compra de algunos productos representativos dentro del portafolio. Es necesario identificar las causas de la disminución y presentar alternativas comerciales."},
@@ -156,11 +207,9 @@ def dar_formato_tabla(table, col_widths, headers, rows_data):
                 row_cells[c_idx]._tc.get_or_add_tcPr().append(shading)
 
 def construir_documento_word(contexto, path_template=None):
+    # Cargar plantilla conservando márgenes, encabezados y pies de página de GitHub
     if path_template and os.path.exists(path_template):
         doc = Document(path_template)
-        for paragraph in list(doc.paragraphs):
-            p = paragraph._element
-            p.getparent().remove(p)
     else:
         doc = Document()
 
@@ -292,11 +341,6 @@ def render_modulo_informe(df_global):
                 break
 
         df_base = df_global.copy()
-        
-        # Filtro de documentos: Incluir FACTURA y NOTA CREDITO (que restan)
-        if col_tipo_doc:
-            mask_docs = df_base[col_tipo_doc].astype(str).str.upper().str.contains("FACTURA|NOTA", na=False)
-            df_base = df_base[mask_docs]
 
         # Detección explícita de TOTAL LINEA
         col_val = None
@@ -340,11 +384,22 @@ def render_modulo_informe(df_global):
             nom_b_act = cfg_b["nombre"]
             nom_b_prev = MAPA_BIMESTRES[cfg_b["previo"]]["nombre"]
 
-            # --- FILTRADO DE LOS 3 PERÍODOS EN LA BASE GLOBAL ---
+            # --- FILTRADO DE CADA PERÍODO CON SU RESPECTIVA LÓGICA DE DOCUMENTOS ---
+            # 1. Bimestre Actual (P1): SOLO FACTURAS
             df_p1_base = df_base[(df_base["AÑO"] == anio_sel) & (df_base["MES"].isin(cfg_b["meses"]))]
+            if col_tipo_doc:
+                df_p1_base = df_p1_base[df_p1_base[col_tipo_doc].astype(str).str.upper().str.contains("FACTURA", na=False)]
+
+            # 2. Bimestre Año Anterior (P2): FACTURA Y NOTA CRÉDITO
             df_p2_base = df_base[(df_base["AÑO"] == (anio_sel - 1)) & (df_base["MES"].isin(cfg_b["meses"]))]
+            if col_tipo_doc:
+                df_p2_base = df_p2_base[df_p2_base[col_tipo_doc].astype(str).str.upper().str.contains("FACTURA|NOTA", na=False)]
+
+            # 3. Bimestre Inmediatamente Anterior (P3): FACTURA Y NOTA CRÉDITO
             anio_p3 = anio_sel if bim_sel != "B1" else (anio_sel - 1)
             df_p3_base = df_base[(df_base["AÑO"] == anio_p3) & (df_base["MES"].isin(cfg_b["meses_prev"]))]
+            if col_tipo_doc:
+                df_p3_base = df_p3_base[df_p3_base[col_tipo_doc].astype(str).str.upper().str.contains("FACTURA|NOTA", na=False)]
 
             # --- OBTENER LISTA DE CLIENTES CARGADOS ---
             lista_cli_custom = []
@@ -401,7 +456,7 @@ def render_modulo_informe(df_global):
             else:
                 tot_cli_act, tot_cli_p2, tot_cli_p3 = 0.0, 0.0, 0.0
 
-            # --- 2. TABLA DE FABRICANTES (FILTRADA FRENTE AL LISTADO DE CLIENTES CARGADOS) ---
+            # --- 2. TABLA DE FABRICANTES ---
             tabla_provs = []
             if col_prov and col_prov in df_base.columns:
                 lista_fab_custom = []
@@ -462,9 +517,9 @@ def render_modulo_informe(df_global):
             head_b_ant_anio = f"VENTA {bim_sel} {anio_sel-1}"
             head_b_prev = f"VENTA {cfg_b['previo']} {anio_p3}"
 
-            # --- 3. GRÁFICA Y ANÁLISIS COMERCIAL ALIMENTADOS CON VENTAS DE CLIENTES ---
+            # --- 3. GRÁFICA Y ANÁLISIS COMERCIAL CON PRODUCTOS DE DESCRIPCION ---
             buf_grafica = generar_grafica_comparativa([head_b_act, head_b_ant_anio, head_b_prev], [tot_cli_act, tot_cli_p2, tot_cli_p3])
-            txt_analisis, aspectos_lista, txt_cierre = generar_analisis_y_aspectos(tot_cli_act, tot_cli_p2, tot_cli_p3, df_p1, nom_b_act, nom_b_prev, anio_sel, col_val)
+            txt_analisis, aspectos_lista, txt_cierre = generar_analisis_y_aspectos(tot_cli_act, tot_cli_p2, tot_cli_p3, df_p1, df_p3, nom_b_act, nom_b_prev, anio_sel, col_val)
 
             path_template = "templates/BIMENSUAL MAY-JUN.docx"
 
