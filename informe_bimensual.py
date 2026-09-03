@@ -24,10 +24,14 @@ def preparar_dataframe(df):
         return df
 
     df = df.copy()
+    
+    # Normalización de nombres de columnas para evitar fallas
+    df.columns = [str(col).strip().upper() for col in df.columns]
+
     if "MES" not in df.columns or "AÑO" not in df.columns:
         col_fecha = None
         for col in df.columns:
-            if "FECHA" in str(col).upper():
+            if "FECHA" in col:
                 col_fecha = col
                 break
         
@@ -40,16 +44,33 @@ def preparar_dataframe(df):
 
     return df
 
-def netear_notas_credito(df, col_val):
+def aplicar_neteo_total_linea(df):
     """
-    Aplica el descuento de notas crédito respetando todos los registros originales.
-    Si el documento es Nota Crédito / NC, invierte su valor a negativo para descontar.
+    Toma únicamente la columna TOTAL LINEA.
+    Identifica FACTURA vs NOTA CREDITO en TIPO DOC.
+    Garantiza que las Notas Crédito resten a las Facturas.
     """
-    if df.empty or not col_val:
+    if df is None or df.empty:
         return df
 
     df_res = df.copy()
     
+    # Asegurar uso estricto de TOTAL LINEA
+    col_val = "TOTAL LINEA"
+    if col_val not in df_res.columns:
+        # Fallback de búsqueda si el nombre tiene variaciones pequeñas
+        for c in df_res.columns:
+            if "TOTAL" in c and "LINEA" in c:
+                col_val = c
+                break
+
+    if col_val not in df_res.columns:
+        return df_res
+
+    # Convertir columna a tipo numérico
+    df_res[col_val] = pd.to_numeric(df_res[col_val], errors='coerce').fillna(0.0)
+
+    # Buscar la columna de TIPO DOC
     col_tipo_doc = None
     for c in ["TIPO DOC", "TIPO_DOC", "TIPO DOCUMENTO", "DOCUMENTO", "TIPO"]:
         if c in df_res.columns:
@@ -57,8 +78,10 @@ def netear_notas_credito(df, col_val):
             break
 
     if col_tipo_doc:
+        # Identificar Facturas y Notas Crédito
         es_nc = df_res[col_tipo_doc].astype(str).str.upper().str.contains("NOTA|NC|CREDITO|CRÉDITO", na=False)
-        # Si la nota crédito viene con valor positivo, la multiplicamos por -1 para restar
+        
+        # Si la Nota Crédito está con valor positivo, la pasamos a negativo para que reste
         df_res.loc[es_nc & (df_res[col_val] > 0), col_val] = -1 * df_res.loc[es_nc & (df_res[col_val] > 0), col_val]
 
     return df_res
@@ -96,7 +119,7 @@ def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, df_p3, nom_b_act, nom_
     tend_anio = "un crecimiento" if var_vs_anio >= 0 else "un decrecimiento"
     tend_bim = "un incremento" if var_vs_bim >= 0 else "una disminución"
 
-    # --- ANÁLISIS DE LA COLUMNA DESCRIPCION (3 A 4 TOP CRECIMIENTOS Y 3 A 4 TOP CAÍDAS) ---
+    # --- ANÁLISIS DE PRODUCTOS (3 A 4 TOP CRECIMIENTOS Y 3 A 4 TOP CAÍDAS) ---
     col_desc = None
     for c in ["DESCRIPCION", "DESCRIPCIÓN", "PRODUCTO", "CONCEPTO", "LINEA"]:
         if c in df_p1.columns:
@@ -107,7 +130,7 @@ def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, df_p3, nom_b_act, nom_
     prod_bajaron_str = ""
     texto_insumos = ""
 
-    if col_desc:
+    if col_desc and col_val in df_p1.columns:
         v_p1_prod = df_p1.groupby(col_desc)[col_val].sum() if not df_p1.empty else pd.Series(dtype=float)
         v_p3_prod = df_p3.groupby(col_desc)[col_val].sum() if not df_p3.empty else pd.Series(dtype=float)
 
@@ -130,8 +153,8 @@ def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, df_p3, nom_b_act, nom_
         df_diff = pd.DataFrame(diff_list)
 
         if not df_diff.empty:
-            subieron = df_diff[df_diff["diff"] > 0].sort_values(by="diff", ascending=False).head(3)
-            bajaron = df_diff[df_diff["diff"] < 0].sort_values(by="diff", ascending=True).head(3)
+            subieron = df_diff[df_diff["diff"] > 0].sort_values(by="diff", ascending=False).head(4)
+            bajaron = df_diff[df_diff["diff"] < 0].sort_values(by="diff", ascending=True).head(4)
 
             if not subieron.empty:
                 prod_subieron_str = ", ".join([
@@ -366,29 +389,27 @@ def render_modulo_informe(df_global):
                 st.error(f"Error al leer archivo de fabricantes: {e}")
 
     with tab_gen:
-        df_base = df_global.copy()
-
-        col_val = None
-        for c in ["TOTAL LINEA", "TOTAL_LINEA", "VALOR_VENTA", "VALOR", "TOTAL"]:
-            if c in df_base.columns:
-                col_val = c
-                break
+        # Columna principal obligatoria
+        col_val = "TOTAL LINEA"
         
-        if not col_val:
-            st.error("⚠️ No se encontró la columna 'TOTAL LINEA' en la base de datos.")
-            return
+        # Validación de columna TOTAL LINEA
+        if col_val not in df_global.columns:
+            for c in df_global.columns:
+                if "TOTAL" in c and "LINEA" in c:
+                    col_val = c
+                    break
 
-        col_vendedor = "VENDEDOR" if "VENDEDOR" in df_base.columns else "RESPONSABLE"
+        col_vendedor = "VENDEDOR" if "VENDEDOR" in df_global.columns else "RESPONSABLE"
         
         col_cliente = None
         for c in ["CLIENTE", "NOMBRE_CLIENTE", "TERCERO", "RAZON_SOCIAL"]:
-            if c in df_base.columns:
+            if c in df_global.columns:
                 col_cliente = c
                 break
                 
         col_prov = None
         for c in ["FABRICANTE", "PROVEEDOR", "MARCA"]:
-            if c in df_base.columns:
+            if c in df_global.columns:
                 col_prov = c
                 break
 
@@ -396,12 +417,12 @@ def render_modulo_informe(df_global):
         col1, col2, col3 = st.columns(3)
 
         with col1:
-            lista_vendedores = sorted(df_base[col_vendedor].dropna().unique()) if col_vendedor in df_base.columns else ["Todos"]
+            lista_vendedores = sorted(df_global[col_vendedor].dropna().unique()) if col_vendedor in df_global.columns else ["Todos"]
             vendedor_sel = st.selectbox("Seleccione Vendedor / Responsable:", lista_vendedores)
         with col2:
             bim_sel = st.selectbox("Seleccione el Bimestre del Informe:", list(MAPA_BIMESTRES.keys()), format_func=lambda x: MAPA_BIMESTRES[x]["nombre"])
         with col3:
-            anios_disponibles = sorted(df_base["AÑO"].dropna().astype(int).unique(), reverse=True)
+            anios_disponibles = sorted(df_global["AÑO"].dropna().astype(int).unique(), reverse=True)
             anio_sel = st.selectbox("Seleccione el Año Actual:", anios_disponibles)
 
         if st.button("🚀 Generar Informe Bimensual"):
@@ -409,23 +430,21 @@ def render_modulo_informe(df_global):
             nom_b_act = cfg_b["nombre"]
             nom_b_prev = MAPA_BIMESTRES[cfg_b["previo"]]["nombre"]
 
-            # --- FILTRADO ORIGINAL EXACTO POR VENDEDOR ---
-            if col_vendedor in df_base.columns and vendedor_sel != "Todos":
-                df_base = df_base[df_base[col_vendedor] == vendedor_sel]
+            # 1. APLICAR NETEO SOBRE LA BASE COMPLETA (FACTURA - NOTA CREDITO SOBRE TOTAL LINEA)
+            df_base_neteada = aplicar_neteo_total_linea(df_global)
 
-            # --- LÓGICA DE FECHAS EXACTA QUE YA TE FUNCIONABA ---
-            df_p1_raw = df_base[(df_base["AÑO"] == anio_sel) & (df_base["MES"].isin(cfg_b["meses"]))]
-            df_p2_raw = df_base[(df_base["AÑO"] == (anio_sel - 1)) & (df_base["MES"].isin(cfg_b["meses"]))]
+            # 2. FILTRAR POR VENDEDOR
+            if col_vendedor in df_base_neteada.columns and vendedor_sel != "Todos":
+                df_base_neteada = df_base_neteada[df_base_neteada[col_vendedor] == vendedor_sel]
+
+            # 3. EXTRAER LOS BIMESTRES
+            df_p1_base = df_base_neteada[(df_base_neteada["AÑO"] == anio_sel) & (df_base_neteada["MES"].isin(cfg_b["meses"]))]
+            df_p2_base = df_base_neteada[(df_base_neteada["AÑO"] == (anio_sel - 1)) & (df_base_neteada["MES"].isin(cfg_b["meses"]))]
             
             anio_p3 = anio_sel if bim_sel != "B1" else (anio_sel - 1)
-            df_p3_raw = df_base[(df_base["AÑO"] == anio_p3) & (df_base["MES"].isin(cfg_b["meses_prev"]))]
+            df_p3_base = df_base_neteada[(df_base_neteada["AÑO"] == anio_p3) & (df_base_neteada["MES"].isin(cfg_b["meses_prev"]))]
 
-            # Se aplica el neteo de notas crédito de forma transparente sin descartar filas
-            df_p1_base = netear_notas_credito(df_p1_raw, col_val)
-            df_p2_base = netear_notas_credito(df_p2_raw, col_val)
-            df_p3_base = netear_notas_credito(df_p3_raw, col_val)
-
-            # Lista personalizada de clientes
+            # LISTA CUSTOM DE CLIENTES
             lista_cli_custom = []
             if 'df_clientes_custom' in st.session_state and not st.session_state['df_clientes_custom'].empty:
                 df_cc = st.session_state['df_clientes_custom']
@@ -439,9 +458,9 @@ def render_modulo_informe(df_global):
             else:
                 df_p1, df_p2, df_p3 = df_p1_base, df_p2_base, df_p3_base
 
-            # --- TABLA DE CLIENTES ---
+            # --- CONSTRUCCIÓN TABLA DE CLIENTES (USANDO DATOS NETEADOS Y TOTAL LINEA) ---
             tabla_clis = []
-            if col_cliente and col_cliente in df_base.columns:
+            if col_cliente and col_cliente in df_base_neteada.columns:
                 if lista_cli_custom:
                     for cli in lista_cli_custom:
                         va = float(df_p1[df_p1[col_cliente].astype(str).str.strip().str.upper() == cli][col_val].sum()) if not df_p1.empty else 0.0
@@ -476,9 +495,9 @@ def render_modulo_informe(df_global):
                     "v_p3": f"${tot_cli_p3:,.2f}"
                 })
 
-            # --- TABLA DE FABRICANTES ---
+            # --- CONSTRUCCIÓN TABLA DE FABRICANTES (USANDO DATOS NETEADOS Y TOTAL LINEA) ---
             tabla_provs = []
-            if col_prov and col_prov in df_base.columns:
+            if col_prov and col_prov in df_base_neteada.columns:
                 lista_fab_custom = []
                 if 'df_fabricantes_custom' in st.session_state and not st.session_state['df_fabricantes_custom'].empty:
                     df_fc = st.session_state['df_fabricantes_custom']
@@ -570,7 +589,7 @@ def render_modulo_informe(df_global):
                 doc.save(output_buf)
                 output_buf.seek(0)
 
-                st.success("✅ Informe generado correctamente recuperando todos los períodos.")
+                st.success("✅ Informe generado correctamente leyendo únicamente 'TOTAL LINEA' y neteando las Notas Crédito.")
                 st.download_button(
                     label="📥 Descargar Informe Word (.docx)",
                     data=output_buf,
