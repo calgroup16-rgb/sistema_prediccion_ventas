@@ -125,16 +125,28 @@ def dar_formato_tabla(table, col_widths, headers, rows_data):
         hdr_cells[i]._tc.get_or_add_tcPr().append(shading)
 
     # Filas de datos
+    tot_rows = len(rows_data)
     for r_idx, row in enumerate(rows_data):
         row_cells = table.add_row().cells
+        es_ultima_fila = (r_idx == tot_rows - 1)
+        
         for c_idx, val in enumerate(row):
             row_cells[c_idx].text = str(val)
             p = row_cells[c_idx].paragraphs[0]
             p.alignment = WD_ALIGN_PARAGRAPH.LEFT if c_idx == 0 else WD_ALIGN_PARAGRAPH.RIGHT
             for run in p.runs:
                 run.font.size = Pt(9)
+                if es_ultima_fila:
+                    run.font.bold = True
 
-            if r_idx % 2 == 1:
+            # Sombreado
+            if es_ultima_fila:
+                shading = OxmlElement('w:shd')
+                shading.set(qn('w:val'), 'clear')
+                shading.set(qn('w:color'), 'auto')
+                shading.set(qn('w:fill'), 'D9E1F2') # Fondo azul claro para el Total
+                row_cells[c_idx]._tc.get_or_add_tcPr().append(shading)
+            elif r_idx % 2 == 1:
                 shading = OxmlElement('w:shd')
                 shading.set(qn('w:val'), 'clear')
                 shading.set(qn('w:color'), 'auto')
@@ -158,7 +170,7 @@ def construir_documento_word(contexto, path_template=None):
     r_title.font.size = Pt(16)
     r_title.font.color.rgb = RGBColor(31, 78, 120)
 
-    # Subtítulo Vendedor
+    # Subtítulo Vendedor / Responsable
     p_sub = doc.add_paragraph()
     p_sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
     r_sub = p_sub.add_run(f"Responsable Comercial: {contexto['vendedor']} | Año: {contexto['anio']}")
@@ -290,7 +302,7 @@ def render_modulo_informe(df_global):
 
         with col1:
             lista_vendedores = sorted(df_base[col_vendedor].dropna().unique()) if col_vendedor in df_base.columns else ["Todos"]
-            vendedor_sel = st.selectbox("Seleccione Vendedor / Titular para el informe:", lista_vendedores)
+            vendedor_sel = st.selectbox("Seleccione Vendedor / Responsable:", lista_vendedores)
         with col2:
             bim_sel = st.selectbox("Seleccione el Bimestre del Informe:", list(MAPA_BIMESTRES.keys()), format_func=lambda x: MAPA_BIMESTRES[x]["nombre"])
         with col3:
@@ -302,18 +314,21 @@ def render_modulo_informe(df_global):
             nom_b_act = cfg_b["nombre"]
             nom_b_prev = MAPA_BIMESTRES[cfg_b["previo"]]["nombre"]
 
-            # Ventas globales completas
+            # --- FILTRADO DE LOS 3 PERÍODOS EN LA BASE GLOBAL ---
+            # 1. Bimestre Actual
             df_p1 = df_base[(df_base["AÑO"] == anio_sel) & (df_base["MES"].isin(cfg_b["meses"]))]
+            # 2. Bimestre Actual del Año Anterior
             df_p2 = df_base[(df_base["AÑO"] == (anio_sel - 1)) & (df_base["MES"].isin(cfg_b["meses"]))]
-            
+            # 3. Bimestre Inmediatamente Anterior
             anio_p3 = anio_sel if bim_sel != "B1" else (anio_sel - 1)
             df_p3 = df_base[(df_base["AÑO"] == anio_p3) & (df_base["MES"].isin(cfg_b["meses_prev"]))]
 
+            # Totales globales de ventas para gráfica/análisis
             v_act = float(df_p1[col_val].sum()) if not df_p1.empty else 0.0
             v_p2 = float(df_p2[col_val].sum()) if not df_p2.empty else 0.0
             v_p3 = float(df_p3[col_val].sum()) if not df_p3.empty else 0.0
 
-            # --- 1. TABLA DE FABRICANTES / PROVEEDORES (CON 'Otros') ---
+            # --- 1. TABLA DE FABRICANTES / PROVEEDORES (CON 'Otros' Y 'Total') ---
             tabla_provs = []
             if col_prov in df_base.columns:
                 lista_fab_custom = []
@@ -335,7 +350,7 @@ def render_modulo_informe(df_global):
                         vp2 = float(df_p2[df_p2[col_prov].astype(str).str.strip().str.upper() == fab][col_val].sum()) if not df_p2.empty else 0.0
                         vp3 = float(df_p3[df_p3[col_prov].astype(str).str.strip().str.upper() == fab][col_val].sum()) if not df_p3.empty else 0.0
 
-                        tabla_provs.append({"PROVEEDOR": fab, "v_act": f"${va:,.2f}", "v_p2": f"${vp2:,.2f}", "v_p3": f"${vp3:,.2f}", "raw_val": va})
+                        tabla_provs.append({"PROVEEDOR": fab, "v_act_num": va, "v_p2_num": vp2, "v_p3_num": vp3})
 
                     for p in todos_provs:
                         if p.upper() not in lista_fab_custom:
@@ -343,18 +358,36 @@ def render_modulo_informe(df_global):
                             otros_v_p2 += float(df_p2[df_p2[col_prov].astype(str).str.strip() == p][col_val].sum()) if not df_p2.empty else 0.0
                             otros_v_p3 += float(df_p3[df_p3[col_prov].astype(str).str.strip() == p][col_val].sum()) if not df_p3.empty else 0.0
 
-                    tabla_provs = sorted(tabla_provs, key=lambda x: x["raw_val"], reverse=True)
-                    tabla_provs.append({"PROVEEDOR": "Otros", "v_act": f"${otros_v_act:,.2f}", "v_p2": f"${otros_v_p2:,.2f}", "v_p3": f"${otros_v_p3:,.2f}", "raw_val": otros_v_act})
+                    tabla_provs = sorted(tabla_provs, key=lambda x: x["v_act_num"], reverse=True)
+                    tabla_provs.append({"PROVEEDOR": "Otros", "v_act_num": otros_v_act, "v_p2_num": otros_v_p2, "v_p3_num": otros_v_p3})
                 else:
                     provs = set(df_p1[col_prov].dropna()).union(df_p2[col_prov].dropna()).union(df_p3[col_prov].dropna())
                     for p in provs:
                         va = float(df_p1[df_p1[col_prov] == p][col_val].sum()) if not df_p1.empty else 0.0
                         vp2 = float(df_p2[df_p2[col_prov] == p][col_val].sum()) if not df_p2.empty else 0.0
                         vp3 = float(df_p3[df_p3[col_prov] == p][col_val].sum()) if not df_p3.empty else 0.0
-                        tabla_provs.append({"PROVEEDOR": str(p), "v_act": f"${va:,.2f}", "v_p2": f"${vp2:,.2f}", "v_p3": f"${vp3:,.2f}", "raw_val": va})
-                    tabla_provs = sorted(tabla_provs, key=lambda x: x["raw_val"], reverse=True)
+                        tabla_provs.append({"PROVEEDOR": str(p), "v_act_num": va, "v_p2_num": vp2, "v_p3_num": vp3})
+                    tabla_provs = sorted(tabla_provs, key=lambda x: x["v_act_num"], reverse=True)
 
-            # --- 2. TABLA DE CLIENTES (EXCLUSIVAMENTE LA LISTA CARGADA, SIN 'OTROS') ---
+                # Fila de TOTAL FABRICANTES
+                tot_fab_act = sum(x["v_act_num"] for x in tabla_provs)
+                tot_fab_p2 = sum(x["v_p2_num"] for x in tabla_provs)
+                tot_fab_p3 = sum(x["v_p3_num"] for x in tabla_provs)
+
+                # Formatear números a string con $
+                for item in tabla_provs:
+                    item["v_act"] = f"${item['v_act_num']:,.2f}"
+                    item["v_p2"] = f"${item['v_p2_num']:,.2f}"
+                    item["v_p3"] = f"${item['v_p3_num']:,.2f}"
+
+                tabla_provs.append({
+                    "PROVEEDOR": "TOTAL",
+                    "v_act": f"${tot_fab_act:,.2f}",
+                    "v_p2": f"${tot_fab_p2:,.2f}",
+                    "v_p3": f"${tot_fab_p3:,.2f}"
+                })
+
+            # --- 2. TABLA DE CLIENTES (EXCLUSIVAMENTE LA LISTA CARGADA + FILA TOTAL) ---
             tabla_clis = []
             if col_cliente in df_base.columns:
                 lista_cli_custom = []
@@ -364,24 +397,40 @@ def render_modulo_informe(df_global):
                     lista_cli_custom = [str(x).strip().upper() for x in df_cc[col_cc].dropna().unique()]
 
                 if lista_cli_custom:
-                    # Se toman EXCLUSIVAMENTE los clientes definidos en la lista
                     for cli in lista_cli_custom:
                         va = float(df_p1[df_p1[col_cliente].astype(str).str.strip().str.upper() == cli][col_val].sum()) if not df_p1.empty else 0.0
                         vp2 = float(df_p2[df_p2[col_cliente].astype(str).str.strip().str.upper() == cli][col_val].sum()) if not df_p2.empty else 0.0
                         vp3 = float(df_p3[df_p3[col_cliente].astype(str).str.strip().str.upper() == cli][col_val].sum()) if not df_p3.empty else 0.0
 
-                        tabla_clis.append({"CLIENTE": cli, "v_act": f"${va:,.2f}", "v_p2": f"${vp2:,.2f}", "v_p3": f"${vp3:,.2f}", "raw_val": va})
+                        tabla_clis.append({"CLIENTE": cli, "v_act_num": va, "v_p2_num": vp2, "v_p3_num": vp3})
 
-                    tabla_clis = sorted(tabla_clis, key=lambda x: x["raw_val"], reverse=True)
+                    tabla_clis = sorted(tabla_clis, key=lambda x: x["v_act_num"], reverse=True)
                 else:
-                    # Si no se carga lista de clientes, muestra todos los clientes registrados
                     clis = set(df_p1[col_cliente].dropna()).union(df_p2[col_cliente].dropna()).union(df_p3[col_cliente].dropna())
                     for c in clis:
                         va = float(df_p1[df_p1[col_cliente] == c][col_val].sum()) if not df_p1.empty else 0.0
                         vp2 = float(df_p2[df_p2[col_cliente] == c][col_val].sum()) if not df_p2.empty else 0.0
                         vp3 = float(df_p3[df_p3[col_cliente] == c][col_val].sum()) if not df_p3.empty else 0.0
-                        tabla_clis.append({"CLIENTE": str(c), "v_act": f"${va:,.2f}", "v_p2": f"${vp2:,.2f}", "v_p3": f"${vp3:,.2f}", "raw_val": va})
-                    tabla_clis = sorted(tabla_clis, key=lambda x: x["raw_val"], reverse=True)
+                        tabla_clis.append({"CLIENTE": str(c), "v_act_num": va, "v_p2_num": vp2, "v_p3_num": vp3})
+                    tabla_clis = sorted(tabla_clis, key=lambda x: x["v_act_num"], reverse=True)
+
+                # Fila de TOTAL CLIENTES
+                tot_cli_act = sum(x["v_act_num"] for x in tabla_clis)
+                tot_cli_p2 = sum(x["v_p2_num"] for x in tabla_clis)
+                tot_cli_p3 = sum(x["v_p3_num"] for x in tabla_clis)
+
+                # Formatear números a string con $
+                for item in tabla_clis:
+                    item["v_act"] = f"${item['v_act_num']:,.2f}"
+                    item["v_p2"] = f"${item['v_p2_num']:,.2f}"
+                    item["v_p3"] = f"${item['v_p3_num']:,.2f}"
+
+                tabla_clis.append({
+                    "CLIENTE": "TOTAL",
+                    "v_act": f"${tot_cli_act:,.2f}",
+                    "v_p2": f"${tot_cli_p2:,.2f}",
+                    "v_p3": f"${tot_cli_p3:,.2f}"
+                })
 
             head_b_act = f"VENTA {bim_sel} {anio_sel}"
             head_b_ant_anio = f"VENTA {bim_sel} {anio_sel-1}"
