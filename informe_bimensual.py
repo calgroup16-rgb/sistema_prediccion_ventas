@@ -10,6 +10,7 @@ from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
+# --- MAPA REGLA FIXA DE BIMESTRES ---
 MAPA_BIMESTRES = {
     "B1": {"nombre": "B1 (Ene - Feb)", "texto_titulo": "Enero - Febrero", "meses": [1, 2], "previo": "B6", "meses_prev": [11, 12]},
     "B2": {"nombre": "B2 (Mar - Abr)", "texto_titulo": "Marzo - Abril", "meses": [3, 4], "previo": "B1", "meses_prev": [1, 2]},
@@ -25,74 +26,66 @@ def preparar_dataframe(df):
 
     df = df.copy()
     
-    # Normalización de nombres de columnas para evitar fallas
-    df.columns = [str(col).strip().upper() for col in df.columns]
+    # Normalizar encabezados quitando espacios bordes
+    df.columns = [str(col).strip() for col in df.columns]
 
-    if "MES" not in df.columns or "AÑO" not in df.columns:
-        col_fecha = None
-        for col in df.columns:
-            if "FECHA" in col:
-                col_fecha = col
-                break
-        
+    # Identificar columnas fijas AÑO y MES
+    col_ano = next((c for c in df.columns if str(c).strip().upper() in ["AÑO", "ANO", "ANIO", "YEAR"]), None)
+    col_mes = next((c for c in df.columns if str(c).strip().upper() in ["MES", "MONTH"]), None)
+
+    if not col_ano or not col_mes:
+        col_fecha = next((c for c in df.columns if "FECHA" in str(c).strip().upper()), None)
         if col_fecha:
             df[col_fecha] = pd.to_datetime(df[col_fecha], errors='coerce')
-            if "MES" not in df.columns:
+            if not col_mes:
                 df["MES"] = df[col_fecha].dt.month
-            if "AÑO" not in df.columns:
+            if not col_ano:
                 df["AÑO"] = df[col_fecha].dt.year
+
+    if col_ano and col_ano != "AÑO":
+        df["AÑO"] = df[col_ano]
+    if col_mes and col_mes != "MES":
+        df["MES"] = df[col_mes]
+
+    # FORZAR AÑO Y MES A ENTEROS (Limpia valores con decimales como 2025.0)
+    df["AÑO"] = pd.to_numeric(df["AÑO"], errors="coerce").fillna(0).astype(int)
+    df["MES"] = pd.to_numeric(df["MES"], errors="coerce").fillna(0).astype(int)
 
     return df
 
 def aplicar_neteo_total_linea(df):
     """
-    Toma únicamente la columna TOTAL LINEA.
-    Identifica FACTURA vs NOTA CREDITO en TIPO DOC.
-    Garantiza que las Notas Crédito resten a las Facturas.
+    Regla Fija: TOTAL LINEA y TIPO DOC.
+    Las Notas Crédito restan.
     """
     if df is None or df.empty:
-        return df
+        return df, "TOTAL LINEA"
 
     df_res = df.copy()
-    
-    # Asegurar uso estricto de TOTAL LINEA
-    col_val = "TOTAL LINEA"
-    if col_val not in df_res.columns:
-        # Fallback de búsqueda si el nombre tiene variaciones pequeñas
-        for c in df_res.columns:
-            if "TOTAL" in c and "LINEA" in c:
-                col_val = c
-                break
 
-    if col_val not in df_res.columns:
-        return df_res
+    col_val = next((c for c in df_res.columns if str(c).strip().upper() == "TOTAL LINEA"), None)
+    if not col_val:
+        col_val = next((c for c in df_res.columns if "TOTAL" in str(c).upper() and "LINEA" in str(c).upper()), None)
+    if not col_val:
+        col_val = next((c for c in df_res.columns if "TOTAL" in str(c).upper()), df_res.columns[-1])
 
-    # Convertir columna a tipo numérico
     df_res[col_val] = pd.to_numeric(df_res[col_val], errors='coerce').fillna(0.0)
 
-    # Buscar la columna de TIPO DOC
-    col_tipo_doc = None
-    for c in ["TIPO DOC", "TIPO_DOC", "TIPO DOCUMENTO", "DOCUMENTO", "TIPO"]:
-        if c in df_res.columns:
-            col_tipo_doc = c
-            break
+    col_tipo_doc = next((c for c in df_res.columns if str(c).strip().upper() in ["TIPO DOC", "TIPO_DOC", "TIPO DOCUMENTO", "DOCUMENTO"]), None)
 
     if col_tipo_doc:
-        # Identificar Facturas y Notas Crédito
         es_nc = df_res[col_tipo_doc].astype(str).str.upper().str.contains("NOTA|NC|CREDITO|CRÉDITO", na=False)
-        
-        # Si la Nota Crédito está con valor positivo, la pasamos a negativo para que reste
         df_res.loc[es_nc & (df_res[col_val] > 0), col_val] = -1 * df_res.loc[es_nc & (df_res[col_val] > 0), col_val]
 
-    return df_res
+    return df_res, col_val
 
 def generar_grafica_comparativa_fabricantes(labels, valores_totales):
     fig, ax = plt.subplots(figsize=(6.5, 3.5))
     colores = ['#1f77b4', '#ff7f0e', '#2ca02c']
     
     bars = ax.bar(labels, valores_totales, color=colores, width=0.45)
-    ax.set_ylabel('Ventas Fabricantes ($)', fontsize=10, fontfamily='sans-serif')
-    ax.set_title('Gráfica 1. Comparativo Bimensual de Ventas por Línea / Fabricante', fontsize=11, fontweight='bold', fontfamily='sans-serif')
+    ax.set_ylabel('Ventas ($)', fontsize=10, fontfamily='sans-serif')
+    ax.set_title('Gráfica 1. Comparativo Bimensual de Ventas Totales', fontsize=11, fontweight='bold', fontfamily='sans-serif')
     
     for bar in bars:
         height = bar.get_height()
@@ -119,105 +112,68 @@ def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, df_p3, nom_b_act, nom_
     tend_anio = "un crecimiento" if var_vs_anio >= 0 else "un decrecimiento"
     tend_bim = "un incremento" if var_vs_bim >= 0 else "una disminución"
 
-    # --- ANÁLISIS DE PRODUCTOS (3 A 4 TOP CRECIMIENTOS Y 3 A 4 TOP CAÍDAS) ---
-    col_desc = None
-    for c in ["DESCRIPCION", "DESCRIPCIÓN", "PRODUCTO", "CONCEPTO", "LINEA"]:
-        if c in df_p1.columns:
-            col_desc = c
-            break
+    col_desc = next((c for c in df_p1.columns if str(c).strip().upper() in ["DESCRIPCION", "DESCRIPCIÓN", "PRODUCTO", "CONCEPTO", "LINEA"]), None)
 
-    prod_subieron_str = ""
-    prod_bajaron_str = ""
-    texto_insumos = ""
+    prod_subieron_str, prod_bajaron_str, texto_insumos = "", "", ""
 
     if col_desc and col_val in df_p1.columns:
         v_p1_prod = df_p1.groupby(col_desc)[col_val].sum() if not df_p1.empty else pd.Series(dtype=float)
         v_p3_prod = df_p3.groupby(col_desc)[col_val].sum() if not df_p3.empty else pd.Series(dtype=float)
 
         todos_prods = list(set(v_p1_prod.index).union(set(v_p3_prod.index)))
-        
         diff_list = []
         for p in todos_prods:
             v_actual = float(v_p1_prod.get(p, 0.0))
             v_previo = float(v_p3_prod.get(p, 0.0))
             diff = v_actual - v_previo
             pct = ((diff / v_previo) * 100) if v_previo > 0 else (100.0 if v_actual > 0 else 0.0)
-            diff_list.append({
-                "producto": str(p).strip(),
-                "diff": diff,
-                "v_act": v_actual,
-                "v_prev": v_previo,
-                "pct": pct
-            })
+            diff_list.append({"producto": str(p).strip(), "diff": diff, "pct": pct})
 
         df_diff = pd.DataFrame(diff_list)
 
         if not df_diff.empty:
-            subieron = df_diff[df_diff["diff"] > 0].sort_values(by="diff", ascending=False).head(4)
-            bajaron = df_diff[df_diff["diff"] < 0].sort_values(by="diff", ascending=True).head(4)
+            subieron = df_diff[df_diff["diff"] > 0].sort_values(by="diff", ascending=False).head(3)
+            bajaron = df_diff[df_diff["diff"] < 0].sort_values(by="diff", ascending=True).head(3)
 
             if not subieron.empty:
-                prod_subieron_str = ", ".join([
-                    f"'{row['producto']}' (+${row['diff']:,.0f} / +{row['pct']:.1f}%)" 
-                    for _, row in subieron.iterrows()
-                ])
+                prod_subieron_str = ", ".join([f"'{row['producto']}' (+${row['diff']:,.0f})" for _, row in subieron.iterrows()])
             if not bajaron.empty:
-                prod_bajaron_str = ", ".join([
-                    f"'{row['producto']}' (-${abs(row['diff']):,.0f} / {row['pct']:.1f}%)" 
-                    for _, row in bajaron.iterrows()
-                ])
+                prod_bajaron_str = ", ".join([f"'{row['producto']}' (-${abs(row['diff']):,.0f})" for _, row in bajaron.iterrows()])
 
             if prod_subieron_str or prod_bajaron_str:
-                texto_insumos = " En cuanto a los productos principales de la columna descripción: "
+                texto_insumos = " Destacando en el portafolio: "
                 if prod_subieron_str:
-                    texto_insumos += f"se destacan por un importante crecimiento en ventas {prod_subieron_str}."
+                    texto_insumos += f"crecimiento en {prod_subieron_str}."
                 if prod_bajaron_str:
-                    texto_insumos += f" Por otro lado, los productos con mayor reducción en ventas fueron {prod_bajaron_str}."
+                    texto_insumos += f" Reducción en {prod_bajaron_str}."
 
     texto_analisis = (
         f"Durante el período {nom_b_act} de {anio_actual}, se alcanzaron ventas totales netas de ${v_act:,.2f}. "
         f"Al comparar este resultado con el mismo período del año anterior ({nom_b_act} {anio_actual-1}), "
         f"se evidencia {tend_anio} del {abs(var_vs_anio):.2f}% (frente a ${v_p2:,.2f}). "
         f"Asimismo, en relación con el bimestre inmediatamente anterior ({nom_b_prev}), se registró "
-        f"{tend_bim} del {abs(var_vs_bim):.2f}% respecto a los ${v_p3:,.2f} facturados previamente."
+        f"{tend_bim} del {abs(var_vs_bim):.2f}% respecto a los ${v_p3:,.2f} facturados."
         f"{texto_insumos}"
     )
 
-    col_cli = None
-    for c in ["CLIENTE", "NOMBRE_CLIENTE", "TERCERO", "RAZON_SOCIAL"]:
-        if c in df_p1.columns:
-            col_cli = c
-            break
-
+    col_cli = next((c for c in df_p1.columns if str(c).strip().upper() in ["CLIENTE", "NOMBRE_CLIENTE", "TERCERO", "RAZON_SOCIAL"]), None)
     top_clis = df_p1.groupby(col_cli)[col_val].sum().sort_values(ascending=False).index.tolist() if col_cli and not df_p1.empty else []
-    cli_1 = str(top_clis[0]) if len(top_clis) > 0 else "cuentas principales"
-    cli_2 = str(top_clis[1]) if len(top_clis) > 1 else "cuentas secundarias"
-    cli_3 = str(top_clis[2]) if len(top_clis) > 2 else "otros clientes estratégicos"
-
-    desc_insumos_aspecto = (
-        f"Se debe dinamizar la rotación e implementar estrategias comerciales específicas para los productos que mostraron mayor caída "
-        f"({prod_bajaron_str if prod_bajaron_str else 'productos con reducción'}), "
-        f"y a su vez asegurar el abastecimiento y potenciar la demanda de los productos clave que lideraron el crecimiento "
-        f"({prod_subieron_str if prod_subieron_str else 'productos en crecimiento'})."
-    )
+    cli_1 = str(top_clis[0]) if len(top_clis) > 0 else "clientes clave"
+    cli_2 = str(top_clis[1]) if len(top_clis) > 1 else "segundo grupo de cuentas"
 
     aspectos = [
-        {"titulo": "Análisis y gestión de demanda por líneas e insumos con mayor variación", "descripcion": desc_insumos_aspecto},
-        {"titulo": "Recuperación de negocios pendientes y mayor seguimiento comercial", "descripcion": f"Se requiere fortalecer el seguimiento a clientes con procesos de compra pendientes como {cli_1} y {cli_2}, estableciendo fechas de compromiso y realizando un acompañamiento más cercano con las áreas técnicas y de compras."},
-        {"titulo": "Mejorar la disponibilidad de inventario en productos estratégicos", "descripcion": "Algunos negocios se vieron afectados por retrasos derivados del desabastecimiento de productos de alta rotación, principalmente sabores, estándares de crioscopio y otros insumos especializados."},
-        {"titulo": "Incrementar la participación de las líneas CHARM y productos de mayor rentabilidad", "descripcion": f"Existe una oportunidad importante para fortalecer la comercialización de productos como lactasa, hisopos de luminometria, GMP y demás soluciones CHARM, aprovechando la cartera activa de {cli_3}."},
-        {"titulo": "Recuperación de clientes y productos con disminución en ventas", "descripcion": "Se evidencian reducciones en la compra de algunos productos representativos dentro del portafolio. Es necesario identificar las causas de la disminución y presentar alternativas comerciales."},
-        {"titulo": "Aumentar la venta cruzada en clientes activos", "descripcion": "Clientes con compras recurrentes representan una oportunidad constante para incrementar la participación mediante la incorporación de nuevas líneas de negocio."},
-        {"titulo": "Fortalecer la planeación comercial con clientes estratégicos", "descripcion": "Promover que los clientes compartan sus proyecciones mensuales o trimestrales de consumo permitirá mejorar la planeación de inventarios y anticipar necesidades."},
-        {"titulo": "Continuar la recuperación de cuentas con alto potencial", "descripcion": "Se continuará con las gestiones comerciales para recuperar clientes y líneas de negocio que presentan oportunidades de crecimiento."},
-        {"titulo": "Optimización de la gestión de cartera y recaudo oportuno", "descripcion": "Monitorear semanalmente la conversión de facturación a cartera efectiva para asegurar el flujo de caja sin frenar la colocación de nuevos pedidos."}
+        {"titulo": "Análisis de líneas e insumos con mayor variación", "descripcion": f"Impulsar estrategias para revertir caídas en productos afectados y mantener abastecimiento constante."},
+        {"titulo": "Recuperación de negocios pendientes", "descripcion": f"Fortalecer seguimiento a clientes estratégicos como {cli_1} y {cli_2}."},
+        {"titulo": "Disponibilidad de inventario", "descripcion": "Garantizar disponibilidad continua en insumos de alta rotación."},
+        {"titulo": "Líneas de mayor rentabilidad", "descripcion": "Aumentar participación comercial de las líneas con mayor margen."},
+        {"titulo": "Venta cruzada y cartera", "descripcion": "Aprovechar cuentas activas para introducir nuevos productos y acelerar recaudo."}
     ]
 
-    texto_cierre = "De acuerdo con la revisión, es importante potenciar la venta de productos como lactasa, hisopos, GMP y en general las líneas de negocio de CHARM."
+    texto_cierre = "Se mantiene el enfoque en potenciar la venta de las líneas principales y asegurar el cumplimiento de metas comerciales."
 
     return texto_analisis, aspectos, texto_cierre
 
-def dar_formato_tabla(table, col_widths, headers, rows_data):
+def dar_formato_tabla(table, headers, rows_data):
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
     
     hdr_cells = table.rows[0].cells
@@ -264,10 +220,7 @@ def dar_formato_tabla(table, col_widths, headers, rows_data):
                 row_cells[c_idx]._tc.get_or_add_tcPr().append(shading)
 
 def construir_documento_word(contexto, path_template=None):
-    if path_template and os.path.exists(path_template):
-        doc = Document(path_template)
-    else:
-        doc = Document()
+    doc = Document(path_template) if path_template and os.path.exists(path_template) else Document()
 
     p_title = doc.add_paragraph()
     p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -284,7 +237,7 @@ def construir_documento_word(contexto, path_template=None):
 
     doc.add_paragraph()
 
-    # 1. TABLA 1: Resumen por Línea / Fabricante
+    # TABLA 1: FABRICANTES
     h1 = doc.add_paragraph()
     r_h1 = h1.add_run("Tabla 1. Resumen de Ventas por Línea / Fabricante")
     r_h1.font.bold = True
@@ -293,20 +246,19 @@ def construir_documento_word(contexto, path_template=None):
 
     headers_prov = ["Fabricante / Proveedor", contexto["col_b_act"], contexto["col_b_ant"], contexto["col_b_prev"]]
     rows_prov = [[item["PROVEEDOR"], item["v_act"], item["v_p2"], item["v_p3"]] for item in contexto["tabla_proveedores"]]
-    
     t_prov = doc.add_table(rows=1, cols=4)
-    dar_formato_tabla(t_prov, [2.5, 1.3, 1.3, 1.3], headers_prov, rows_prov)
+    dar_formato_tabla(t_prov, headers_prov, rows_prov)
 
     doc.add_paragraph()
 
-    # 2. GRÁFICA 1: Comparativo Bimensual de Fabricantes
+    # GRÁFICA
     p_img = doc.add_paragraph()
     p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_picture(contexto["grafica_ventas"], width=Inches(6.0))
 
     doc.add_paragraph()
 
-    # 3. TABLA 2: Resumen por Cliente
+    # TABLA 2: CLIENTES
     h2 = doc.add_paragraph()
     r_h2 = h2.add_run("Tabla 2. Resumen de Ventas por Cliente")
     r_h2.font.bold = True
@@ -315,13 +267,12 @@ def construir_documento_word(contexto, path_template=None):
 
     headers_cli = ["Cliente", contexto["col_b_act"], contexto["col_b_ant"], contexto["col_b_prev"]]
     rows_cli = [[item["CLIENTE"], item["v_act"], item["v_p2"], item["v_p3"]] for item in contexto["tabla_clientes"]]
-    
     t_cli = doc.add_table(rows=1, cols=4)
-    dar_formato_tabla(t_cli, [2.5, 1.3, 1.3, 1.3], headers_cli, rows_cli)
+    dar_formato_tabla(t_cli, headers_cli, rows_cli)
 
     doc.add_paragraph()
 
-    # 4. ANÁLISIS COMERCIAL DEL PERÍODO
+    # ANÁLISIS COMERCIAL
     h3 = doc.add_paragraph()
     r_h3 = h3.add_run("Análisis Comercial del Período")
     r_h3.font.bold = True
@@ -333,14 +284,14 @@ def construir_documento_word(contexto, path_template=None):
 
     doc.add_paragraph()
 
-    # 5. ASPECTOS A MEJORAR Y COMPROMISOS COMERCIALES
+    # ASPECTOS Y COMPROMISOS
     h4 = doc.add_paragraph()
     r_h4 = h4.add_run("Aspectos a Mejorar y Compromisos Comerciales")
     r_h4.font.bold = True
     r_h4.font.size = Pt(13)
     r_h4.font.color.rgb = RGBColor(31, 78, 120)
 
-    for idx, asp in enumerate(contexto["aspectos_mejorar"], 1):
+    for asp in contexto["aspectos_mejorar"]:
         p_asp = doc.add_paragraph()
         p_asp.paragraph_format.left_indent = Inches(0.2)
         p_asp.paragraph_format.line_spacing = 1.15
@@ -377,7 +328,7 @@ def render_modulo_informe(df_global):
                 st.error(f"Error al leer archivo de clientes: {e}")
 
     with tab_fabricantes:
-        st.subheader("Cargar Archivo de Fabricantes / Proveedores Principales")
+        st.subheader("Cargar Archivo de Fabricantes Principales")
         file_fab = st.file_uploader("Cargue la lista de fabricantes (Excel/CSV):", type=["xlsx", "xls", "csv"], key="file_fab_inf")
         if file_fab:
             try:
@@ -389,29 +340,9 @@ def render_modulo_informe(df_global):
                 st.error(f"Error al leer archivo de fabricantes: {e}")
 
     with tab_gen:
-        # Columna principal obligatoria
-        col_val = "TOTAL LINEA"
-        
-        # Validación de columna TOTAL LINEA
-        if col_val not in df_global.columns:
-            for c in df_global.columns:
-                if "TOTAL" in c and "LINEA" in c:
-                    col_val = c
-                    break
-
-        col_vendedor = "VENDEDOR" if "VENDEDOR" in df_global.columns else "RESPONSABLE"
-        
-        col_cliente = None
-        for c in ["CLIENTE", "NOMBRE_CLIENTE", "TERCERO", "RAZON_SOCIAL"]:
-            if c in df_global.columns:
-                col_cliente = c
-                break
-                
-        col_prov = None
-        for c in ["FABRICANTE", "PROVEEDOR", "MARCA"]:
-            if c in df_global.columns:
-                col_prov = c
-                break
+        col_vendedor = next((c for c in df_global.columns if str(c).strip().upper() in ["VENDEDOR", "RESPONSABLE"]), "VENDEDOR")
+        col_cliente = next((c for c in df_global.columns if str(c).strip().upper() in ["CLIENTE", "NOMBRE_CLIENTE", "TERCERO", "RAZON_SOCIAL"]), None)
+        col_prov = next((c for c in df_global.columns if str(c).strip().upper() in ["FABRICANTE", "PROVEEDOR", "MARCA"]), None)
 
         st.subheader("Configuración del Informe")
         col1, col2, col3 = st.columns(3)
@@ -422,7 +353,7 @@ def render_modulo_informe(df_global):
         with col2:
             bim_sel = st.selectbox("Seleccione el Bimestre del Informe:", list(MAPA_BIMESTRES.keys()), format_func=lambda x: MAPA_BIMESTRES[x]["nombre"])
         with col3:
-            anios_disponibles = sorted(df_global["AÑO"].dropna().astype(int).unique(), reverse=True)
+            anios_disponibles = sorted([int(x) for x in df_global["AÑO"].unique() if x > 0], reverse=True)
             anio_sel = st.selectbox("Seleccione el Año Actual:", anios_disponibles)
 
         if st.button("🚀 Generar Informe Bimensual"):
@@ -430,45 +361,37 @@ def render_modulo_informe(df_global):
             nom_b_act = cfg_b["nombre"]
             nom_b_prev = MAPA_BIMESTRES[cfg_b["previo"]]["nombre"]
 
-            # 1. APLICAR NETEO SOBRE LA BASE COMPLETA (FACTURA - NOTA CREDITO SOBRE TOTAL LINEA)
-            df_base_neteada = aplicar_neteo_total_linea(df_global)
+            # 1. APLICAR NETEO EN BASE COMPLETA
+            df_base_neteada, col_val = aplicar_neteo_total_linea(df_global)
 
             # 2. FILTRAR POR VENDEDOR
             if col_vendedor in df_base_neteada.columns and vendedor_sel != "Todos":
                 df_base_neteada = df_base_neteada[df_base_neteada[col_vendedor] == vendedor_sel]
 
-            # 3. EXTRAER LOS BIMESTRES
-            df_p1_base = df_base_neteada[(df_base_neteada["AÑO"] == anio_sel) & (df_base_neteada["MES"].isin(cfg_b["meses"]))]
-            df_p2_base = df_base_neteada[(df_base_neteada["AÑO"] == (anio_sel - 1)) & (df_base_neteada["MES"].isin(cfg_b["meses"]))]
-            
-            anio_p3 = anio_sel if bim_sel != "B1" else (anio_sel - 1)
-            df_p3_base = df_base_neteada[(df_base_neteada["AÑO"] == anio_p3) & (df_base_neteada["MES"].isin(cfg_b["meses_prev"]))]
+            # 3. EXTRAER LOS 3 DATAFRAMES EXACTOS (SIN FILTRAR NI ELIMINAR FILAS AÚN)
+            anio_act = int(anio_sel)
+            anio_prev_ano = int(anio_sel - 1)
+            anio_p3 = int(anio_sel if bim_sel != "B1" else (anio_sel - 1))
 
-            # LISTA CUSTOM DE CLIENTES
-            lista_cli_custom = []
-            if 'df_clientes_custom' in st.session_state and not st.session_state['df_clientes_custom'].empty:
-                df_cc = st.session_state['df_clientes_custom']
-                col_cc = df_cc.columns[0]
-                lista_cli_custom = [str(x).strip().upper() for x in df_cc[col_cc].dropna().unique()]
+            df_p1 = df_base_neteada[(df_base_neteada["AÑO"] == anio_act) & (df_base_neteada["MES"].isin(cfg_b["meses"]))]
+            df_p2 = df_base_neteada[(df_base_neteada["AÑO"] == anio_prev_ano) & (df_base_neteada["MES"].isin(cfg_b["meses"]))]
+            df_p3 = df_base_neteada[(df_base_neteada["AÑO"] == anio_p3) & (df_base_neteada["MES"].isin(cfg_b["meses_prev"]))]
 
-            if col_cliente and lista_cli_custom:
-                df_p1 = df_p1_base[df_p1_base[col_cliente].astype(str).str.strip().str.upper().isin(lista_cli_custom)]
-                df_p2 = df_p2_base[df_p2_base[col_cliente].astype(str).str.strip().str.upper().isin(lista_cli_custom)]
-                df_p3 = df_p3_base[df_p3_base[col_cliente].astype(str).str.strip().str.upper().isin(lista_cli_custom)]
-            else:
-                df_p1, df_p2, df_p3 = df_p1_base, df_p2_base, df_p3_base
-
-            # --- CONSTRUCCIÓN TABLA DE CLIENTES (USANDO DATOS NETEADOS Y TOTAL LINEA) ---
+            # --- CONSTRUCCIÓN DE TABLA CLIENTES ---
             tabla_clis = []
             if col_cliente and col_cliente in df_base_neteada.columns:
+                lista_cli_custom = []
+                if 'df_clientes_custom' in st.session_state and not st.session_state['df_clientes_custom'].empty:
+                    df_cc = st.session_state['df_clientes_custom']
+                    lista_cli_custom = [str(x).strip().upper() for x in df_cc.iloc[:, 0].dropna().unique()]
+
                 if lista_cli_custom:
                     for cli in lista_cli_custom:
                         va = float(df_p1[df_p1[col_cliente].astype(str).str.strip().str.upper() == cli][col_val].sum()) if not df_p1.empty else 0.0
                         vp2 = float(df_p2[df_p2[col_cliente].astype(str).str.strip().str.upper() == cli][col_val].sum()) if not df_p2.empty else 0.0
                         vp3 = float(df_p3[df_p3[col_cliente].astype(str).str.strip().str.upper() == cli][col_val].sum()) if not df_p3.empty else 0.0
-
                         tabla_clis.append({"CLIENTE": cli, "v_act_num": va, "v_p2_num": vp2, "v_p3_num": vp3})
-
+                    
                     tabla_clis = sorted(tabla_clis, key=lambda x: x["v_act_num"], reverse=True)
                 else:
                     clis = set(df_p1[col_cliente].dropna()).union(df_p2[col_cliente].dropna()).union(df_p3[col_cliente].dropna())
@@ -477,11 +400,13 @@ def render_modulo_informe(df_global):
                         vp2 = float(df_p2[df_p2[col_cliente] == c][col_val].sum()) if not df_p2.empty else 0.0
                         vp3 = float(df_p3[df_p3[col_cliente] == c][col_val].sum()) if not df_p3.empty else 0.0
                         tabla_clis.append({"CLIENTE": str(c), "v_act_num": va, "v_p2_num": vp2, "v_p3_num": vp3})
+                    
                     tabla_clis = sorted(tabla_clis, key=lambda x: x["v_act_num"], reverse=True)
 
-                tot_cli_act = sum(x["v_act_num"] for x in tabla_clis)
-                tot_cli_p2 = sum(x["v_p2_num"] for x in tabla_clis)
-                tot_cli_p3 = sum(x["v_p3_num"] for x in tabla_clis)
+                # CÁLCULO DE TOTALES DE CLIENTES SOBRE LA BASE TOTAL REAL
+                tot_cli_act = float(df_p1[col_val].sum()) if not df_p1.empty else 0.0
+                tot_cli_p2 = float(df_p2[col_val].sum()) if not df_p2.empty else 0.0
+                tot_cli_p3 = float(df_p3[col_val].sum()) if not df_p3.empty else 0.0
 
                 for item in tabla_clis:
                     item["v_act"] = f"${item['v_act_num']:,.2f}"
@@ -495,38 +420,37 @@ def render_modulo_informe(df_global):
                     "v_p3": f"${tot_cli_p3:,.2f}"
                 })
 
-            # --- CONSTRUCCIÓN TABLA DE FABRICANTES (USANDO DATOS NETEADOS Y TOTAL LINEA) ---
+            # --- CONSTRUCCIÓN DE TABLA FABRICANTES ---
             tabla_provs = []
             if col_prov and col_prov in df_base_neteada.columns:
                 lista_fab_custom = []
                 if 'df_fabricantes_custom' in st.session_state and not st.session_state['df_fabricantes_custom'].empty:
                     df_fc = st.session_state['df_fabricantes_custom']
-                    col_fc = df_fc.columns[0]
-                    lista_fab_custom = [str(x).strip().upper() for x in df_fc[col_fc].dropna().unique()]
+                    lista_fab_custom = [str(x).strip().upper() for x in df_fc.iloc[:, 0].dropna().unique()]
 
                 if lista_fab_custom:
-                    otros_v_act, otros_v_p2, otros_v_p3 = 0.0, 0.0, 0.0
-                    todos_provs = set(df_p1[col_prov].dropna().astype(str).str.strip()).union(
-                        set(df_p2[col_prov].dropna().astype(str).str.strip())
-                    ).union(
-                        set(df_p3[col_prov].dropna().astype(str).str.strip())
-                    )
-
                     for fab in lista_fab_custom:
                         va = float(df_p1[df_p1[col_prov].astype(str).str.strip().str.upper() == fab][col_val].sum()) if not df_p1.empty else 0.0
                         vp2 = float(df_p2[df_p2[col_prov].astype(str).str.strip().str.upper() == fab][col_val].sum()) if not df_p2.empty else 0.0
                         vp3 = float(df_p3[df_p3[col_prov].astype(str).str.strip().str.upper() == fab][col_val].sum()) if not df_p3.empty else 0.0
-
                         tabla_provs.append({"PROVEEDOR": fab, "v_act_num": va, "v_p2_num": vp2, "v_p3_num": vp3})
 
-                    for p in todos_provs:
-                        if p.upper() not in lista_fab_custom:
-                            otros_v_act += float(df_p1[df_p1[col_prov].astype(str).str.strip() == p][col_val].sum()) if not df_p1.empty else 0.0
-                            otros_v_p2 += float(df_p2[df_p2[col_prov].astype(str).str.strip() == p][col_val].sum()) if not df_p2.empty else 0.0
-                            otros_v_p3 += float(df_p3[df_p3[col_prov].astype(str).str.strip() == p][col_val].sum()) if not df_p3.empty else 0.0
+                    # Fila "Otros" para mantener integridad de totales
+                    sum_fab_act = sum(x["v_act_num"] for x in tabla_provs)
+                    sum_fab_p2 = sum(x["v_p2_num"] for x in tabla_provs)
+                    sum_fab_p3 = sum(x["v_p3_num"] for x in tabla_provs)
+
+                    tot_fab_act = float(df_p1[col_val].sum()) if not df_p1.empty else 0.0
+                    tot_fab_p2 = float(df_p2[col_val].sum()) if not df_p2.empty else 0.0
+                    tot_fab_p3 = float(df_p3[col_val].sum()) if not df_p3.empty else 0.0
 
                     tabla_provs = sorted(tabla_provs, key=lambda x: x["v_act_num"], reverse=True)
-                    tabla_provs.append({"PROVEEDOR": "Otros", "v_act_num": otros_v_act, "v_p2_num": otros_v_p2, "v_p3_num": otros_v_p3})
+                    tabla_provs.append({
+                        "PROVEEDOR": "Otros",
+                        "v_act_num": tot_fab_act - sum_fab_act,
+                        "v_p2_num": tot_fab_p2 - sum_fab_p2,
+                        "v_p3_num": tot_fab_p3 - sum_fab_p3
+                    })
                 else:
                     provs = set(df_p1[col_prov].dropna()).union(df_p2[col_prov].dropna()).union(df_p3[col_prov].dropna())
                     for p in provs:
@@ -534,11 +458,11 @@ def render_modulo_informe(df_global):
                         vp2 = float(df_p2[df_p2[col_prov] == p][col_val].sum()) if not df_p2.empty else 0.0
                         vp3 = float(df_p3[df_p3[col_prov] == p][col_val].sum()) if not df_p3.empty else 0.0
                         tabla_provs.append({"PROVEEDOR": str(p), "v_act_num": va, "v_p2_num": vp2, "v_p3_num": vp3})
+                    
                     tabla_provs = sorted(tabla_provs, key=lambda x: x["v_act_num"], reverse=True)
-
-                tot_fab_act = sum(x["v_act_num"] for x in tabla_provs)
-                tot_fab_p2 = sum(x["v_p2_num"] for x in tabla_provs)
-                tot_fab_p3 = sum(x["v_p3_num"] for x in tabla_provs)
+                    tot_fab_act = float(df_p1[col_val].sum()) if not df_p1.empty else 0.0
+                    tot_fab_p2 = float(df_p2[col_val].sum()) if not df_p2.empty else 0.0
+                    tot_fab_p3 = float(df_p3[col_val].sum()) if not df_p3.empty else 0.0
 
                 for item in tabla_provs:
                     item["v_act"] = f"${item['v_act_num']:,.2f}"
@@ -552,7 +476,9 @@ def render_modulo_informe(df_global):
                     "v_p3": f"${tot_fab_p3:,.2f}"
                 })
             else:
-                tot_fab_act, tot_fab_p2, tot_fab_p3 = 0.0, 0.0, 0.0
+                tot_fab_act = float(df_p1[col_val].sum()) if not df_p1.empty else 0.0
+                tot_fab_p2 = float(df_p2[col_val].sum()) if not df_p2.empty else 0.0
+                tot_fab_p3 = float(df_p3[col_val].sum()) if not df_p3.empty else 0.0
 
             head_b_act = f"VENTA {bim_sel} {anio_sel}"
             head_b_ant_anio = f"VENTA {bim_sel} {anio_sel-1}"
@@ -589,7 +515,7 @@ def render_modulo_informe(df_global):
                 doc.save(output_buf)
                 output_buf.seek(0)
 
-                st.success("✅ Informe generado correctamente leyendo únicamente 'TOTAL LINEA' y neteando las Notas Crédito.")
+                st.success("✅ Informe generado exitosamente con la suma correcta de todos los períodos.")
                 st.download_button(
                     label="📥 Descargar Informe Word (.docx)",
                     data=output_buf,
