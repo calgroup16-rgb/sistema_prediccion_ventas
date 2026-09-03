@@ -181,7 +181,7 @@ def construir_documento_word(contexto, path_template=None):
 
     doc.add_paragraph()
 
-    # 1. Gráfica Comparativa (Basada en las ventas de los clientes)
+    # 1. Gráfica Comparativa
     p_img = doc.add_paragraph()
     p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_picture(contexto["grafica_ventas"], width=Inches(6.0))
@@ -284,7 +284,6 @@ def render_modulo_informe(df_global):
                 st.error(f"Error al leer archivo de fabricantes: {e}")
 
     with tab_gen:
-        # Detectar la columna de TIPO_DOC
         col_tipo_doc = None
         for col in ["TIPO DOC", "TIPO_DOC", "TIPO DOCUMENTO", "DOCUMENTO", "TIPO"]:
             if col in df_global.columns:
@@ -292,11 +291,6 @@ def render_modulo_informe(df_global):
                 break
 
         df_base = df_global.copy()
-        
-        # Filtro de documentos: Incluir FACTURA y NOTA CREDITO (que restan)
-        if col_tipo_doc:
-            mask_docs = df_base[col_tipo_doc].astype(str).str.upper().str.contains("FACTURA|NOTA", na=False)
-            df_base = df_base[mask_docs]
 
         # Detección explícita de TOTAL LINEA
         col_val = None
@@ -340,11 +334,22 @@ def render_modulo_informe(df_global):
             nom_b_act = cfg_b["nombre"]
             nom_b_prev = MAPA_BIMESTRES[cfg_b["previo"]]["nombre"]
 
-            # --- FILTRADO DE LOS 3 PERÍODOS EN LA BASE GLOBAL ---
+            # --- FILTRADO DE CADA PERÍODO CON SU RESPECTIVA LÓGICA DE DOCUMENTOS ---
+            # 1. Bimestre Actual (P1): SOLO FACTURAS
             df_p1_base = df_base[(df_base["AÑO"] == anio_sel) & (df_base["MES"].isin(cfg_b["meses"]))]
+            if col_tipo_doc:
+                df_p1_base = df_p1_base[df_p1_base[col_tipo_doc].astype(str).str.upper().str.contains("FACTURA", na=False)]
+
+            # 2. Bimestre Año Anterior (P2): FACTURA Y NOTA CRÉDITO
             df_p2_base = df_base[(df_base["AÑO"] == (anio_sel - 1)) & (df_base["MES"].isin(cfg_b["meses"]))]
+            if col_tipo_doc:
+                df_p2_base = df_p2_base[df_p2_base[col_tipo_doc].astype(str).str.upper().str.contains("FACTURA|NOTA", na=False)]
+
+            # 3. Bimestre Inmediatamente Anterior (P3): FACTURA Y NOTA CRÉDITO
             anio_p3 = anio_sel if bim_sel != "B1" else (anio_sel - 1)
             df_p3_base = df_base[(df_base["AÑO"] == anio_p3) & (df_base["MES"].isin(cfg_b["meses_prev"]))]
+            if col_tipo_doc:
+                df_p3_base = df_p3_base[df_p3_base[col_tipo_doc].astype(str).str.upper().str.contains("FACTURA|NOTA", na=False)]
 
             # --- OBTENER LISTA DE CLIENTES CARGADOS ---
             lista_cli_custom = []
@@ -382,7 +387,6 @@ def render_modulo_informe(df_global):
                         tabla_clis.append({"CLIENTE": str(c), "v_act_num": va, "v_p2_num": vp2, "v_p3_num": vp3})
                     tabla_clis = sorted(tabla_clis, key=lambda x: x["v_act_num"], reverse=True)
 
-                # Totales numéricos reales del cliente
                 tot_cli_act = sum(x["v_act_num"] for x in tabla_clis)
                 tot_cli_p2 = sum(x["v_p2_num"] for x in tabla_clis)
                 tot_cli_p3 = sum(x["v_p3_num"] for x in tabla_clis)
@@ -401,7 +405,7 @@ def render_modulo_informe(df_global):
             else:
                 tot_cli_act, tot_cli_p2, tot_cli_p3 = 0.0, 0.0, 0.0
 
-            # --- 2. TABLA DE FABRICANTES (FILTRADA FRENTE AL LISTADO DE CLIENTES CARGADOS) ---
+            # --- 2. TABLA DE FABRICANTES ---
             tabla_provs = []
             if col_prov and col_prov in df_base.columns:
                 lista_fab_custom = []
@@ -462,7 +466,7 @@ def render_modulo_informe(df_global):
             head_b_ant_anio = f"VENTA {bim_sel} {anio_sel-1}"
             head_b_prev = f"VENTA {cfg_b['previo']} {anio_p3}"
 
-            # --- 3. GRÁFICA Y ANÁLISIS COMERCIAL ALIMENTADOS CON VENTAS DE CLIENTES ---
+            # --- 3. GRÁFICA Y ANÁLISIS COMERCIAL ---
             buf_grafica = generar_grafica_comparativa([head_b_act, head_b_ant_anio, head_b_prev], [tot_cli_act, tot_cli_p2, tot_cli_p3])
             txt_analisis, aspectos_lista, txt_cierre = generar_analisis_y_aspectos(tot_cli_act, tot_cli_p2, tot_cli_p3, df_p1, nom_b_act, nom_b_prev, anio_sel, col_val)
 
