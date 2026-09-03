@@ -118,7 +118,6 @@ def dar_formato_tabla(table, col_widths, headers, rows_data):
             run.font.color.rgb = RGBColor(255, 255, 255)
             run.font.size = Pt(9.5)
             
-        # Color de fondo azul institucional para el encabezado
         shading = OxmlElement('w:shd')
         shading.set(qn('w:val'), 'clear')
         shading.set(qn('w:color'), 'auto')
@@ -135,7 +134,6 @@ def dar_formato_tabla(table, col_widths, headers, rows_data):
             for run in p.runs:
                 run.font.size = Pt(9)
 
-            # Fondo alternado en gris muy claro
             if r_idx % 2 == 1:
                 shading = OxmlElement('w:shd')
                 shading.set(qn('w:val'), 'clear')
@@ -144,10 +142,8 @@ def dar_formato_tabla(table, col_widths, headers, rows_data):
                 row_cells[c_idx]._tc.get_or_add_tcPr().append(shading)
 
 def construir_documento_word(contexto, path_template=None):
-    # Si existe una plantilla con logo/marca de agua la usamos de base, si no creamos un documento nuevo
     if path_template and os.path.exists(path_template):
         doc = Document(path_template)
-        # Limpiamos el contenido preservando el encabezado/marca de agua
         for paragraph in list(doc.paragraphs):
             p = paragraph._element
             p.getparent().remove(p)
@@ -169,7 +165,7 @@ def construir_documento_word(contexto, path_template=None):
     r_sub.font.italic = True
     r_sub.font.size = Pt(11)
 
-    doc.add_paragraph() # Espaciador
+    doc.add_paragraph()
 
     # 1. Gráfica Comparativa
     p_img = doc.add_paragraph()
@@ -250,7 +246,7 @@ def render_modulo_informe(df_global):
     tab_gen, tab_clientes, tab_fabricantes = st.tabs(["🚀 Generar Informe", "📋 Cargar Lista Clientes", "🏭 Cargar Lista Fabricantes"])
 
     with tab_clientes:
-        st.subheader("Cargar Archivo de Clientes")
+        st.subheader("Cargar Archivo de Clientes Principales")
         file_cli = st.file_uploader("Cargue la lista de clientes (Excel/CSV):", type=["xlsx", "xls", "csv"], key="file_cli_inf")
         if file_cli:
             try:
@@ -262,7 +258,7 @@ def render_modulo_informe(df_global):
                 st.error(f"Error al leer archivo de clientes: {e}")
 
     with tab_fabricantes:
-        st.subheader("Cargar Archivo de Fabricantes / Proveedores")
+        st.subheader("Cargar Archivo de Fabricantes / Proveedores Principales")
         file_fab = st.file_uploader("Cargue la lista de fabricantes (Excel/CSV):", type=["xlsx", "xls", "csv"], key="file_fab_inf")
         if file_fab:
             try:
@@ -280,23 +276,25 @@ def render_modulo_informe(df_global):
                 col_tipo_doc = col
                 break
 
+        df_base = df_global.copy()
         if col_tipo_doc:
-            df_global = df_global[df_global[col_tipo_doc].astype(str).str.upper().str.contains("FACTURA", na=False)]
+            df_base = df_base[df_base[col_tipo_doc].astype(str).str.upper().str.contains("FACTURA", na=False)]
 
-        col_vendedor = "VENDEDOR" if "VENDEDOR" in df_global.columns else "RESPONSABLE"
-        col_cliente = "CLIENTE" if "CLIENTE" in df_global.columns else "NOMBRE_CLIENTE"
-        col_prov = "PROVEEDOR" if "PROVEEDOR" in df_global.columns else ("FABRICANTE" if "FABRICANTE" in df_global.columns else "MARCA")
-        col_val = "VALOR_VENTA" if "VALOR_VENTA" in df_global.columns else ("VALOR" if "VALOR" in df_global.columns else "TOTAL")
+        col_vendedor = "VENDEDOR" if "VENDEDOR" in df_base.columns else "RESPONSABLE"
+        col_cliente = "CLIENTE" if "CLIENTE" in df_base.columns else "NOMBRE_CLIENTE"
+        col_prov = "PROVEEDOR" if "PROVEEDOR" in df_base.columns else ("FABRICANTE" if "FABRICANTE" in df_base.columns else "MARCA")
+        col_val = "VALOR_VENTA" if "VALOR_VENTA" in df_base.columns else ("VALOR" if "VALOR" in df_base.columns else "TOTAL")
 
         st.subheader("Configuración del Informe")
         col1, col2, col3 = st.columns(3)
 
         with col1:
-            vendedor_sel = st.selectbox("Seleccione el Vendedor/Responsable:", sorted(df_global[col_vendedor].dropna().unique()))
+            lista_vendedores = sorted(df_base[col_vendedor].dropna().unique()) if col_vendedor in df_base.columns else ["Todos"]
+            vendedor_sel = st.selectbox("Seleccione Vendedor / Titular para el informe:", lista_vendedores)
         with col2:
             bim_sel = st.selectbox("Seleccione el Bimestre del Informe:", list(MAPA_BIMESTRES.keys()), format_func=lambda x: MAPA_BIMESTRES[x]["nombre"])
         with col3:
-            anios_disponibles = sorted(df_global["AÑO"].dropna().astype(int).unique(), reverse=True)
+            anios_disponibles = sorted(df_base["AÑO"].dropna().astype(int).unique(), reverse=True)
             anio_sel = st.selectbox("Seleccione el Año Actual:", anios_disponibles)
 
         if st.button("🚀 Generar Informe Bimensual"):
@@ -304,37 +302,86 @@ def render_modulo_informe(df_global):
             nom_b_act = cfg_b["nombre"]
             nom_b_prev = MAPA_BIMESTRES[cfg_b["previo"]]["nombre"]
 
-            df_vend = df_global[df_global[col_vendedor] == vendedor_sel]
-            
-            df_p1 = df_vend[(df_vend["AÑO"] == anio_sel) & (df_vend["MES"].isin(cfg_b["meses"]))]
-            df_p2 = df_vend[(df_vend["AÑO"] == (anio_sel - 1)) & (df_vend["MES"].isin(cfg_b["meses"]))]
+            # Ventas globales completas
+            df_p1 = df_base[(df_base["AÑO"] == anio_sel) & (df_base["MES"].isin(cfg_b["meses"]))]
+            df_p2 = df_base[(df_base["AÑO"] == (anio_sel - 1)) & (df_base["MES"].isin(cfg_b["meses"]))]
             
             anio_p3 = anio_sel if bim_sel != "B1" else (anio_sel - 1)
-            df_p3 = df_vend[(df_vend["AÑO"] == anio_p3) & (df_vend["MES"].isin(cfg_b["meses_prev"]))]
+            df_p3 = df_base[(df_base["AÑO"] == anio_p3) & (df_base["MES"].isin(cfg_b["meses_prev"]))]
 
             v_act = float(df_p1[col_val].sum()) if not df_p1.empty else 0.0
             v_p2 = float(df_p2[col_val].sum()) if not df_p2.empty else 0.0
             v_p3 = float(df_p3[col_val].sum()) if not df_p3.empty else 0.0
 
+            # --- 1. TABLA DE FABRICANTES / PROVEEDORES (CON 'Otros') ---
             tabla_provs = []
-            if col_prov in df_vend.columns:
-                provs = set(df_p1[col_prov].dropna()).union(df_p2[col_prov].dropna()).union(df_p3[col_prov].dropna())
-                for p in provs:
-                    va = float(df_p1[df_p1[col_prov] == p][col_val].sum()) if not df_p1.empty else 0.0
-                    vp2 = float(df_p2[df_p2[col_prov] == p][col_val].sum()) if not df_p2.empty else 0.0
-                    vp3 = float(df_p3[df_p3[col_prov] == p][col_val].sum()) if not df_p3.empty else 0.0
-                    tabla_provs.append({"PROVEEDOR": str(p), "v_act": f"${va:,.2f}", "v_p2": f"${vp2:,.2f}", "v_p3": f"${vp3:,.2f}", "raw_val": va})
-                tabla_provs = sorted(tabla_provs, key=lambda x: x["raw_val"], reverse=True)
+            if col_prov in df_base.columns:
+                lista_fab_custom = []
+                if 'df_fabricantes_custom' in st.session_state and not st.session_state['df_fabricantes_custom'].empty:
+                    df_fc = st.session_state['df_fabricantes_custom']
+                    col_fc = df_fc.columns[0]
+                    lista_fab_custom = [str(x).strip().upper() for x in df_fc[col_fc].dropna().unique()]
 
+                if lista_fab_custom:
+                    otros_v_act, otros_v_p2, otros_v_p3 = 0.0, 0.0, 0.0
+                    todos_provs = set(df_p1[col_prov].dropna().astype(str).str.strip()).union(
+                        set(df_p2[col_prov].dropna().astype(str).str.strip())
+                    ).union(
+                        set(df_p3[col_prov].dropna().astype(str).str.strip())
+                    )
+
+                    for fab in lista_fab_custom:
+                        va = float(df_p1[df_p1[col_prov].astype(str).str.strip().str.upper() == fab][col_val].sum()) if not df_p1.empty else 0.0
+                        vp2 = float(df_p2[df_p2[col_prov].astype(str).str.strip().str.upper() == fab][col_val].sum()) if not df_p2.empty else 0.0
+                        vp3 = float(df_p3[df_p3[col_prov].astype(str).str.strip().str.upper() == fab][col_val].sum()) if not df_p3.empty else 0.0
+
+                        tabla_provs.append({"PROVEEDOR": fab, "v_act": f"${va:,.2f}", "v_p2": f"${vp2:,.2f}", "v_p3": f"${vp3:,.2f}", "raw_val": va})
+
+                    for p in todos_provs:
+                        if p.upper() not in lista_fab_custom:
+                            otros_v_act += float(df_p1[df_p1[col_prov].astype(str).str.strip() == p][col_val].sum()) if not df_p1.empty else 0.0
+                            otros_v_p2 += float(df_p2[df_p2[col_prov].astype(str).str.strip() == p][col_val].sum()) if not df_p2.empty else 0.0
+                            otros_v_p3 += float(df_p3[df_p3[col_prov].astype(str).str.strip() == p][col_val].sum()) if not df_p3.empty else 0.0
+
+                    tabla_provs = sorted(tabla_provs, key=lambda x: x["raw_val"], reverse=True)
+                    tabla_provs.append({"PROVEEDOR": "Otros", "v_act": f"${otros_v_act:,.2f}", "v_p2": f"${otros_v_p2:,.2f}", "v_p3": f"${otros_v_p3:,.2f}", "raw_val": otros_v_act})
+                else:
+                    provs = set(df_p1[col_prov].dropna()).union(df_p2[col_prov].dropna()).union(df_p3[col_prov].dropna())
+                    for p in provs:
+                        va = float(df_p1[df_p1[col_prov] == p][col_val].sum()) if not df_p1.empty else 0.0
+                        vp2 = float(df_p2[df_p2[col_prov] == p][col_val].sum()) if not df_p2.empty else 0.0
+                        vp3 = float(df_p3[df_p3[col_prov] == p][col_val].sum()) if not df_p3.empty else 0.0
+                        tabla_provs.append({"PROVEEDOR": str(p), "v_act": f"${va:,.2f}", "v_p2": f"${vp2:,.2f}", "v_p3": f"${vp3:,.2f}", "raw_val": va})
+                    tabla_provs = sorted(tabla_provs, key=lambda x: x["raw_val"], reverse=True)
+
+            # --- 2. TABLA DE CLIENTES (EXCLUSIVAMENTE LA LISTA CARGADA, SIN 'OTROS') ---
             tabla_clis = []
-            if col_cliente in df_vend.columns:
-                clis = set(df_p1[col_cliente].dropna()).union(df_p2[col_cliente].dropna()).union(df_p3[col_cliente].dropna())
-                for c in clis:
-                    va = float(df_p1[df_p1[col_cliente] == c][col_val].sum()) if not df_p1.empty else 0.0
-                    vp2 = float(df_p2[df_p2[col_cliente] == c][col_val].sum()) if not df_p2.empty else 0.0
-                    vp3 = float(df_p3[df_p3[col_cliente] == c][col_val].sum()) if not df_p3.empty else 0.0
-                    tabla_clis.append({"CLIENTE": str(c), "v_act": f"${va:,.2f}", "v_p2": f"${vp2:,.2f}", "v_p3": f"${vp3:,.2f}", "raw_val": va})
-                tabla_clis = sorted(tabla_clis, key=lambda x: x["raw_val"], reverse=True)
+            if col_cliente in df_base.columns:
+                lista_cli_custom = []
+                if 'df_clientes_custom' in st.session_state and not st.session_state['df_clientes_custom'].empty:
+                    df_cc = st.session_state['df_clientes_custom']
+                    col_cc = df_cc.columns[0]
+                    lista_cli_custom = [str(x).strip().upper() for x in df_cc[col_cc].dropna().unique()]
+
+                if lista_cli_custom:
+                    # Se toman EXCLUSIVAMENTE los clientes definidos en la lista
+                    for cli in lista_cli_custom:
+                        va = float(df_p1[df_p1[col_cliente].astype(str).str.strip().str.upper() == cli][col_val].sum()) if not df_p1.empty else 0.0
+                        vp2 = float(df_p2[df_p2[col_cliente].astype(str).str.strip().str.upper() == cli][col_val].sum()) if not df_p2.empty else 0.0
+                        vp3 = float(df_p3[df_p3[col_cliente].astype(str).str.strip().str.upper() == cli][col_val].sum()) if not df_p3.empty else 0.0
+
+                        tabla_clis.append({"CLIENTE": cli, "v_act": f"${va:,.2f}", "v_p2": f"${vp2:,.2f}", "v_p3": f"${vp3:,.2f}", "raw_val": va})
+
+                    tabla_clis = sorted(tabla_clis, key=lambda x: x["raw_val"], reverse=True)
+                else:
+                    # Si no se carga lista de clientes, muestra todos los clientes registrados
+                    clis = set(df_p1[col_cliente].dropna()).union(df_p2[col_cliente].dropna()).union(df_p3[col_cliente].dropna())
+                    for c in clis:
+                        va = float(df_p1[df_p1[col_cliente] == c][col_val].sum()) if not df_p1.empty else 0.0
+                        vp2 = float(df_p2[df_p2[col_cliente] == c][col_val].sum()) if not df_p2.empty else 0.0
+                        vp3 = float(df_p3[df_p3[col_cliente] == c][col_val].sum()) if not df_p3.empty else 0.0
+                        tabla_clis.append({"CLIENTE": str(c), "v_act": f"${va:,.2f}", "v_p2": f"${vp2:,.2f}", "v_p3": f"${vp3:,.2f}", "raw_val": va})
+                    tabla_clis = sorted(tabla_clis, key=lambda x: x["raw_val"], reverse=True)
 
             head_b_act = f"VENTA {bim_sel} {anio_sel}"
             head_b_ant_anio = f"VENTA {bim_sel} {anio_sel-1}"
