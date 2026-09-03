@@ -40,6 +40,27 @@ def preparar_dataframe(df):
 
     return df
 
+def aplicar_filtro_documentos_y_netear(df, col_tipo_doc, col_val):
+    """
+    Filtra facturas y notas crédito, asegurando que las Notas Crédito
+    descuenten/resten del valor total de la venta.
+    """
+    if df.empty or not col_tipo_doc or not col_val:
+        return df
+
+    # Filtrar solo documentos válidos (Facturas y Notas Crédito/Débito)
+    patron = "FACTURA|NOTA|NC|ND"
+    df_filtrado = df[df[col_tipo_doc].astype(str).str.upper().str.contains(patron, na=False)].copy()
+
+    # Si en la BD los valores de Notas Crédito vienen positivos, invertimos el signo para restar
+    es_nc = df_filtrado[col_tipo_doc].astype(str).str.upper().str.contains("NOTA|NC", na=False)
+    
+    # Si la suma de las NC es positiva, significa que vienen positivas y hay que multiplicarlas por -1
+    if (df_filtrado.loc[es_nc, col_val] > 0).any():
+        df_filtrado.loc[es_nc, col_val] = -1 * df_filtrado.loc[es_nc, col_val].abs()
+
+    return df_filtrado
+
 def generar_grafica_comparativa_fabricantes(labels, valores_totales):
     fig, ax = plt.subplots(figsize=(6.5, 3.5))
     colores = ['#1f77b4', '#ff7f0e', '#2ca02c']
@@ -85,7 +106,6 @@ def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, df_p3, nom_b_act, nom_
     texto_insumos = ""
 
     if col_desc:
-        # Agrupar sobre el dataframe que ya tiene aplicados los filtros de fecha, tipo doc, vendedor y clientes
         v_p1_prod = df_p1.groupby(col_desc)[col_val].sum() if not df_p1.empty else pd.Series(dtype=float)
         v_p3_prod = df_p3.groupby(col_desc)[col_val].sum() if not df_p3.empty else pd.Series(dtype=float)
 
@@ -108,7 +128,6 @@ def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, df_p3, nom_b_act, nom_
         df_diff = pd.DataFrame(diff_list)
 
         if not df_diff.empty:
-            # Seleccionar estrictamente los 3 o 4 principales
             subieron = df_diff[df_diff["diff"] > 0].sort_values(by="diff", ascending=False).head(3)
             bajaron = df_diff[df_diff["diff"] < 0].sort_values(by="diff", ascending=True).head(3)
 
@@ -131,7 +150,7 @@ def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, df_p3, nom_b_act, nom_
                     texto_insumos += f" Por otro lado, los productos con mayor reducción en ventas fueron {prod_bajaron_str}."
 
     texto_analisis = (
-        f"Durante el período {nom_b_act} de {anio_actual}, se alcanzaron ventas totales netas de ${v_act:,.2f}. "
+        f"Durante el período {nom_b_act} de {anio_actual}, se alcanzaron ventas totales netas de ${v_act:,.2f} (descontando notas crédito). "
         f"Al comparar este resultado con el mismo período del año anterior ({nom_b_act} {anio_actual-1}), "
         f"se evidencia {tend_anio} del {abs(var_vs_anio):.2f}% (frente a ${v_p2:,.2f}). "
         f"Asimismo, en relación con el bimestre inmediatamente anterior ({nom_b_prev}), se registró "
@@ -176,7 +195,6 @@ def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, df_p3, nom_b_act, nom_
 def dar_formato_tabla(table, col_widths, headers, rows_data):
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
     
-    # Encabezado
     hdr_cells = table.rows[0].cells
     for i, title in enumerate(headers):
         hdr_cells[i].text = title
@@ -193,7 +211,6 @@ def dar_formato_tabla(table, col_widths, headers, rows_data):
         shading.set(qn('w:fill'), '1F4E78')
         hdr_cells[i]._tc.get_or_add_tcPr().append(shading)
 
-    # Filas de datos
     tot_rows = len(rows_data)
     for r_idx, row in enumerate(rows_data):
         row_cells = table.add_row().cells
@@ -400,19 +417,16 @@ def render_modulo_informe(df_global):
             if col_vendedor in df_base.columns and vendedor_sel != "Todos":
                 df_base = df_base[df_base[col_vendedor] == vendedor_sel]
 
-            # --- FILTRADO DE CADA PERÍODO ---
-            df_p1_base = df_base[(df_base["AÑO"] == anio_sel) & (df_base["MES"].isin(cfg_b["meses"]))]
-            if col_tipo_doc:
-                df_p1_base = df_p1_base[df_p1_base[col_tipo_doc].astype(str).str.upper().str.contains("FACTURA", na=False)]
+            # --- FILTRADO POR FECHA Y DESCUENTO DE NOTAS CRÉDITO PARA TODOS LOS BIMESTRES ---
+            df_p1_raw = df_base[(df_base["AÑO"] == anio_sel) & (df_base["MES"].isin(cfg_b["meses"]))]
+            df_p1_base = aplicar_filtro_documentos_y_netear(df_p1_raw, col_tipo_doc, col_val)
 
-            df_p2_base = df_base[(df_base["AÑO"] == (anio_sel - 1)) & (df_base["MES"].isin(cfg_b["meses"]))]
-            if col_tipo_doc:
-                df_p2_base = df_p2_base[df_p2_base[col_tipo_doc].astype(str).str.upper().str.contains("FACTURA|NOTA", na=False)]
+            df_p2_raw = df_base[(df_base["AÑO"] == (anio_sel - 1)) & (df_base["MES"].isin(cfg_b["meses"]))]
+            df_p2_base = aplicar_filtro_documentos_y_netear(df_p2_raw, col_tipo_doc, col_val)
 
             anio_p3 = anio_sel if bim_sel != "B1" else (anio_sel - 1)
-            df_p3_base = df_base[(df_base["AÑO"] == anio_p3) & (df_base["MES"].isin(cfg_b["meses_prev"]))]
-            if col_tipo_doc:
-                df_p3_base = df_p3_base[df_p3_base[col_tipo_doc].astype(str).str.upper().str.contains("FACTURA|NOTA", na=False)]
+            df_p3_raw = df_base[(df_base["AÑO"] == anio_p3) & (df_base["MES"].isin(cfg_b["meses_prev"]))]
+            df_p3_base = aplicar_filtro_documentos_y_netear(df_p3_raw, col_tipo_doc, col_val)
 
             # Lista personalizada de clientes
             lista_cli_custom = []
@@ -528,10 +542,8 @@ def render_modulo_informe(df_global):
             head_b_ant_anio = f"VENTA {bim_sel} {anio_sel-1}"
             head_b_prev = f"VENTA {cfg_b['previo']} {anio_p3}"
 
-            # --- GRÁFICA DE FABRICANTES ---
             buf_grafica = generar_grafica_comparativa_fabricantes([head_b_act, head_b_ant_anio, head_b_prev], [tot_fab_act, tot_fab_p2, tot_fab_p3])
             
-            # --- ANÁLISIS COMERCIAL CON TOP 3 PRODUCTOS QUE SUBIERON Y CAYERON ---
             txt_analisis, aspectos_lista, txt_cierre = generar_analisis_y_aspectos(
                 tot_fab_act, tot_fab_p2, tot_fab_p3, df_p1, df_p3, nom_b_act, nom_b_prev, anio_sel, col_val
             )
@@ -561,7 +573,7 @@ def render_modulo_informe(df_global):
                 doc.save(output_buf)
                 output_buf.seek(0)
 
-                st.success("✅ Informe generado correctamente.")
+                st.success("✅ Informe generado correctamente con ventas netas (notas crédito descontadas).")
                 st.download_button(
                     label="📥 Descargar Informe Word (.docx)",
                     data=output_buf,
