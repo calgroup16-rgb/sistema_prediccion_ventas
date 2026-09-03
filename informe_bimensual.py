@@ -3,9 +3,12 @@ import io
 import pandas as pd
 import matplotlib.pyplot as plt
 import streamlit as st
-from docxtpl import DocxTemplate, InlineImage
-from docx.shared import Inches
-import jinja2
+from docx import Document
+from docx.shared import Inches, Pt, RGBColor
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.table import WD_TABLE_ALIGNMENT
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 
 MAPA_BIMESTRES = {
     "B1": {"nombre": "B1 (Ene - Feb)", "texto_titulo": "Enero - Febrero", "meses": [1, 2], "previo": "B6", "meses_prev": [11, 12]},
@@ -100,6 +103,140 @@ def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, col_prov, nom_b_act, n
     texto_cierre = "De acuerdo con la revisión, es importante potenciar la venta de productos como lactasa, hisopos, GMP y en general las líneas de negocio de CHARM."
 
     return texto_analisis, aspectos, texto_cierre
+
+def dar_formato_tabla(table, col_widths, headers, rows_data):
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    
+    # Encabezado
+    hdr_cells = table.rows[0].cells
+    for i, title in enumerate(headers):
+        hdr_cells[i].text = title
+        p = hdr_cells[i].paragraphs[0]
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        for run in p.runs:
+            run.font.bold = True
+            run.font.color.rgb = RGBColor(255, 255, 255)
+            run.font.size = Pt(9.5)
+            
+        # Color de fondo azul institucional para el encabezado
+        shading = OxmlElement('w:shd')
+        shading.set(qn('w:val'), 'clear')
+        shading.set(qn('w:color'), 'auto')
+        shading.set(qn('w:fill'), '1F4E78')
+        hdr_cells[i]._tc.get_or_add_tcPr().append(shading)
+
+    # Filas de datos
+    for r_idx, row in enumerate(rows_data):
+        row_cells = table.add_row().cells
+        for c_idx, val in enumerate(row):
+            row_cells[c_idx].text = str(val)
+            p = row_cells[c_idx].paragraphs[0]
+            p.alignment = WD_ALIGN_PARAGRAPH.LEFT if c_idx == 0 else WD_ALIGN_PARAGRAPH.RIGHT
+            for run in p.runs:
+                run.font.size = Pt(9)
+
+            # Fondo alternado en gris muy claro
+            if r_idx % 2 == 1:
+                shading = OxmlElement('w:shd')
+                shading.set(qn('w:val'), 'clear')
+                shading.set(qn('w:color'), 'auto')
+                shading.set(qn('w:fill'), 'F2F2F2')
+                row_cells[c_idx]._tc.get_or_add_tcPr().append(shading)
+
+def construir_documento_word(contexto, path_template=None):
+    # Si existe una plantilla con logo/marca de agua la usamos de base, si no creamos un documento nuevo
+    if path_template and os.path.exists(path_template):
+        doc = Document(path_template)
+        # Limpiamos el contenido preservando el encabezado/marca de agua
+        for paragraph in list(doc.paragraphs):
+            p = paragraph._element
+            p.getparent().remove(p)
+    else:
+        doc = Document()
+
+    # Título Principal
+    p_title = doc.add_paragraph()
+    p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r_title = p_title.add_run(contexto["titulo_informe"])
+    r_title.font.bold = True
+    r_title.font.size = Pt(16)
+    r_title.font.color.rgb = RGBColor(31, 78, 120)
+
+    # Subtítulo Vendedor
+    p_sub = doc.add_paragraph()
+    p_sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r_sub = p_sub.add_run(f"Responsable Comercial: {contexto['vendedor']} | Año: {contexto['anio']}")
+    r_sub.font.italic = True
+    r_sub.font.size = Pt(11)
+
+    doc.add_paragraph() # Espaciador
+
+    # 1. Gráfica Comparativa
+    p_img = doc.add_paragraph()
+    p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    doc.add_picture(contexto["grafica_ventas"], width=Inches(6.0))
+
+    doc.add_paragraph()
+
+    # 2. Análisis Comercial
+    h1 = doc.add_paragraph()
+    r_h1 = h1.add_run("1. Análisis Comercial del Período")
+    r_h1.font.bold = True
+    r_h1.font.size = Pt(13)
+    r_h1.font.color.rgb = RGBColor(31, 78, 120)
+
+    p_ana = doc.add_paragraph(contexto["analisis_texto"])
+    p_ana.paragraph_format.line_spacing = 1.15
+
+    # 3. Resumen por Fabricante / Proveedor
+    h2 = doc.add_paragraph()
+    r_h2 = h2.add_run("2. Resumen de Ventas por Fabricante / Proveedor")
+    r_h2.font.bold = True
+    r_h2.font.size = Pt(13)
+    r_h2.font.color.rgb = RGBColor(31, 78, 120)
+
+    headers_prov = ["Fabricante / Proveedor", contexto["col_b_act"], contexto["col_b_ant"], contexto["col_b_prev"]]
+    rows_prov = [[item["PROVEEDOR"], item["v_act"], item["v_p2"], item["v_p3"]] for item in contexto["tabla_proveedores"]]
+    
+    t_prov = doc.add_table(rows=1, cols=4)
+    dar_formato_tabla(t_prov, [2.5, 1.3, 1.3, 1.3], headers_prov, rows_prov)
+
+    doc.add_paragraph()
+
+    # 4. Resumen por Cliente
+    h3 = doc.add_paragraph()
+    r_h3 = h3.add_run("3. Resumen de Ventas por Cliente")
+    r_h3.font.bold = True
+    r_h3.font.size = Pt(13)
+    r_h3.font.color.rgb = RGBColor(31, 78, 120)
+
+    headers_cli = ["Cliente", contexto["col_b_act"], contexto["col_b_ant"], contexto["col_b_prev"]]
+    rows_cli = [[item["CLIENTE"], item["v_act"], item["v_p2"], item["v_p3"]] for item in contexto["tabla_clientes"]]
+    
+    t_cli = doc.add_table(rows=1, cols=4)
+    dar_formato_tabla(t_cli, [2.5, 1.3, 1.3, 1.3], headers_cli, rows_cli)
+
+    doc.add_paragraph()
+
+    # 5. Aspectos a Mejorar y Plan de Acción
+    h4 = doc.add_paragraph()
+    r_h4 = h4.add_run("4. Aspectos a Mejorar y Compromisos Comerciales")
+    r_h4.font.bold = True
+    r_h4.font.size = Pt(13)
+    r_h4.font.color.rgb = RGBColor(31, 78, 120)
+
+    for idx, asp in enumerate(contexto["aspectos_mejorar"], 1):
+        p_asp = doc.add_paragraph()
+        p_asp.paragraph_format.left_indent = Inches(0.2)
+        p_asp.paragraph_format.line_spacing = 1.15
+        r_tit = p_asp.add_run(f"• {asp['titulo']}: ")
+        r_tit.font.bold = True
+        p_asp.add_run(asp["descripcion"])
+
+    p_cierre = doc.add_paragraph(contexto["texto_cierre_aspectos"])
+    p_cierre.paragraph_format.line_spacing = 1.15
+
+    return doc
 
 def render_modulo_informe(df_global):
     st.title("📄 Generador de Informe Bimensual")
@@ -207,34 +344,25 @@ def render_modulo_informe(df_global):
             txt_analisis, aspectos_lista, txt_cierre = generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, col_prov, nom_b_act, nom_b_prev, anio_sel)
 
             path_template = "templates/BIMENSUAL MAY-JUN.docx"
-            if not os.path.exists(path_template):
-                st.error(f"❌ No se encontró la plantilla Word en {path_template}")
-                return
-
-            doc = DocxTemplate(path_template)
 
             contexto = {
                 "vendedor": str(vendedor_sel),
-                "nombre_responsable": str(vendedor_sel),
                 "periodo_titulo": str(cfg_b["texto_titulo"]),
-                "titulo_informe": f"INFORME BIMENSUAL {cfg_b['texto_titulo'].upper()} - {vendedor_sel.upper()}",
+                "titulo_informe": f"INFORME BIMENSUAL {cfg_b['texto_titulo'].upper()}",
                 "anio": str(anio_sel),
                 "col_b_act": head_b_act,
                 "col_b_ant": head_b_ant_anio,
                 "col_b_prev": head_b_prev,
                 "tabla_proveedores": tabla_provs,
                 "tabla_clientes": tabla_clis,
-                "total_b_act": f"${v_act:,.2f}",
-                "total_b_ant": f"${v_p2:,.2f}",
-                "total_b_prev": f"${v_p3:,.2f}",
                 "analisis_texto": txt_analisis,
                 "aspectos_mejorar": aspectos_lista,
                 "texto_cierre_aspectos": txt_cierre,
-                "grafica_ventas": InlineImage(doc, buf_grafica, width=Inches(6.0))
+                "grafica_ventas": buf_grafica
             }
 
             try:
-                doc.render(contexto)
+                doc = construir_documento_word(contexto, path_template=path_template)
                 
                 output_buf = io.BytesIO()
                 doc.save(output_buf)
@@ -248,4 +376,4 @@ def render_modulo_informe(df_global):
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 )
             except Exception as err:
-                st.error(f"⚠️ Error al renderizar plantilla Word: {err}")
+                st.error(f"⚠️ Error al construir el documento Word: {err}")
