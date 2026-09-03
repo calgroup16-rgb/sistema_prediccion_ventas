@@ -17,13 +17,10 @@ MAPA_BIMESTRES = {
 }
 
 def preparar_dataframe(df):
-    """Asegura que existan las columnas de AÑO y MES extraídas desde la fecha si no existen explícitamente."""
     if df is None or df.empty:
         return df
 
     df = df.copy()
-    
-    # 1. Detectar o calcular MES y AÑO a partir de columnas de fecha si no están
     if "MES" not in df.columns or "AÑO" not in df.columns:
         col_fecha = None
         for col in df.columns:
@@ -39,7 +36,6 @@ def preparar_dataframe(df):
                 df["AÑO"] = df[col_fecha].dt.year
 
     return df
-
 
 def generar_grafica_comparativa(labels, valores_totales):
     fig, ax = plt.subplots(figsize=(6.5, 3.5))
@@ -66,7 +62,6 @@ def generar_grafica_comparativa(labels, valores_totales):
     img_buf.seek(0)
     plt.close(fig)
     return img_buf
-
 
 def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, col_prov, nom_b_act, nom_b_prev, anio_actual):
     var_vs_anio = ((v_act - v_p2) / v_p2 * 100) if v_p2 > 0 else 0
@@ -106,7 +101,6 @@ def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, col_prov, nom_b_act, n
 
     return texto_analisis, aspectos, texto_cierre
 
-
 def render_modulo_informe(df_global):
     st.title("📄 Generador de Informe Bimensual")
 
@@ -114,10 +108,8 @@ def render_modulo_informe(df_global):
         st.warning("⚠️ Primero debe cargar los datos de ventas en la aplicación.")
         return
 
-    # Preparar columnas de fechas/meses sin alterar el DF original
     df_global = preparar_dataframe(df_global)
 
-    # LAS TRES PESTAÑAS ORIGINALES DEL MÓDULO
     tab_gen, tab_clientes, tab_fabricantes = st.tabs(["🚀 Generar Informe", "📋 Cargar Lista Clientes", "🏭 Cargar Lista Fabricantes"])
 
     with tab_clientes:
@@ -145,7 +137,6 @@ def render_modulo_informe(df_global):
                 st.error(f"Error al leer archivo de fabricantes: {e}")
 
     with tab_gen:
-        # FILTRAR ÚNICAMENTE FACTURAS
         col_tipo_doc = None
         for col in ["TIPO_DOCUMENTO", "TIPO_DOC", "DOCUMENTO", "TIPO"]:
             if col in df_global.columns:
@@ -155,7 +146,6 @@ def render_modulo_informe(df_global):
         if col_tipo_doc:
             df_global = df_global[df_global[col_tipo_doc].astype(str).str.upper().str.contains("FACTURA", na=False)]
 
-        # Detectar columnas de Vendedor, Cliente, Proveedor y Valor
         col_vendedor = "VENDEDOR" if "VENDEDOR" in df_global.columns else "RESPONSABLE"
         col_cliente = "CLIENTE" if "CLIENTE" in df_global.columns else "NOMBRE_CLIENTE"
         col_prov = "PROVEEDOR" if "PROVEEDOR" in df_global.columns else ("FABRICANTE" if "FABRICANTE" in df_global.columns else "MARCA")
@@ -189,7 +179,6 @@ def render_modulo_informe(df_global):
             v_p2 = float(df_p2[col_val].sum()) if not df_p2.empty else 0.0
             v_p3 = float(df_p3[col_val].sum()) if not df_p3.empty else 0.0
 
-            # TABLA FABRICANTES
             tabla_provs = []
             if col_prov in df_vend.columns:
                 provs = set(df_p1[col_prov].dropna()).union(df_p2[col_prov].dropna()).union(df_p3[col_prov].dropna())
@@ -200,7 +189,6 @@ def render_modulo_informe(df_global):
                     tabla_provs.append({"PROVEEDOR": str(p), "v_act": f"${va:,.2f}", "v_p2": f"${vp2:,.2f}", "v_p3": f"${vp3:,.2f}", "raw_val": va})
                 tabla_provs = sorted(tabla_provs, key=lambda x: x["raw_val"], reverse=True)
 
-            # TABLA CLIENTES
             tabla_clis = []
             if col_cliente in df_vend.columns:
                 clis = set(df_p1[col_cliente].dropna()).union(df_p2[col_cliente].dropna()).union(df_p3[col_cliente].dropna())
@@ -223,11 +211,7 @@ def render_modulo_informe(df_global):
                 st.error(f"❌ No se encontró la plantilla Word en {path_template}")
                 return
 
-            # Carga segura mediante stream en memoria para el archivo Word
-            with open(path_template, "rb") as f:
-                template_bytes = io.BytesIO(f.read())
-
-            doc = DocxTemplate(template_bytes)
+            doc = DocxTemplate(path_template)
 
             contexto = {
                 "vendedor": str(vendedor_sel),
@@ -250,8 +234,7 @@ def render_modulo_informe(df_global):
             }
 
             try:
-                jinja_env = jinja2.Environment(autoescape=False)
-                doc.render(contexto, jinja_env)
+                doc.render(contexto)
                 
                 output_buf = io.BytesIO()
                 doc.save(output_buf)
