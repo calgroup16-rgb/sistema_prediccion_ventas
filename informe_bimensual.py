@@ -10,7 +10,7 @@ from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
-# --- MAPA REGLA FIXA DE BIMESTRES ---
+# --- MAPA REGLA FIJA DE BIMESTRES ---
 MAPA_BIMESTRES = {
     "B1": {"nombre": "B1 (Ene - Feb)", "texto_titulo": "Enero - Febrero", "meses": [1, 2], "previo": "B6", "meses_prev": [11, 12]},
     "B2": {"nombre": "B2 (Mar - Abr)", "texto_titulo": "Marzo - Abril", "meses": [3, 4], "previo": "B1", "meses_prev": [1, 2]},
@@ -26,7 +26,7 @@ def preparar_dataframe(df):
 
     df = df.copy()
     
-    # Normalizar encabezados quitando espacios bordes
+    # 1. Normalización de encabezados
     df.columns = [str(col).strip() for col in df.columns]
 
     # Identificar columnas fijas AÑO y MES
@@ -47,7 +47,7 @@ def preparar_dataframe(df):
     if col_mes and col_mes != "MES":
         df["MES"] = df[col_mes]
 
-    # FORZAR AÑO Y MES A ENTEROS (Limpia valores con decimales como 2025.0)
+    # Forzar AÑO y MES a enteros (Limpia valores decimales tipo 2025.0)
     df["AÑO"] = pd.to_numeric(df["AÑO"], errors="coerce").fillna(0).astype(int)
     df["MES"] = pd.to_numeric(df["MES"], errors="coerce").fillna(0).astype(int)
 
@@ -55,8 +55,8 @@ def preparar_dataframe(df):
 
 def aplicar_neteo_total_linea(df):
     """
-    Regla Fija: TOTAL LINEA y TIPO DOC.
-    Las Notas Crédito restan.
+    Regla de Neteo Obligatoria (Filtro Global)
+    Si TIPO DOC es NOTA CREDITO, resta a TOTAL LINEA.
     """
     if df is None or df.empty:
         return df, "TOTAL LINEA"
@@ -74,7 +74,8 @@ def aplicar_neteo_total_linea(df):
     col_tipo_doc = next((c for c in df_res.columns if str(c).strip().upper() in ["TIPO DOC", "TIPO_DOC", "TIPO DOCUMENTO", "DOCUMENTO"]), None)
 
     if col_tipo_doc:
-        es_nc = df_res[col_tipo_doc].astype(str).str.upper().str.contains("NOTA|NC|CREDITO|CRÉDITO", na=False)
+        # Detecta "NOTA CREDITO", "NOTA", "NC", "CREDITO"
+        es_nc = df_res[col_tipo_doc].astype(str).str.strip().str.upper().str.contains("NOTA CREDITO|NOTA|NC|CREDITO|CRÉDITO", na=False)
         df_res.loc[es_nc & (df_res[col_val] > 0), col_val] = -1 * df_res.loc[es_nc & (df_res[col_val] > 0), col_val]
 
     return df_res, col_val
@@ -105,7 +106,7 @@ def generar_grafica_comparativa_fabricantes(labels, valores_totales):
     plt.close(fig)
     return img_buf
 
-def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, df_p3, nom_b_act, nom_b_prev, anio_actual, col_val):
+def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, df_p3, nom_b_act, nom_b_prev, anio_actual, col_val, col_cliente):
     var_vs_anio = ((v_act - v_p2) / v_p2 * 100) if v_p2 > 0 else 0
     var_vs_bim = ((v_act - v_p3) / v_p3 * 100) if v_p3 > 0 else 0
 
@@ -147,6 +148,10 @@ def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, df_p3, nom_b_act, nom_
                 if prod_bajaron_str:
                     texto_insumos += f" Reducción en {prod_bajaron_str}."
 
+    top_clis = df_p1.groupby(col_cliente)[col_val].sum().sort_values(ascending=False).index.tolist() if col_cliente and col_cliente in df_p1.columns and not df_p1.empty else []
+    cli_1 = str(top_clis[0]) if len(top_clis) > 0 else "clientes clave"
+    cli_2 = str(top_clis[1]) if len(top_clis) > 1 else "segundo grupo de cuentas"
+
     texto_analisis = (
         f"Durante el período {nom_b_act} de {anio_actual}, se alcanzaron ventas totales netas de ${v_act:,.2f}. "
         f"Al comparar este resultado con el mismo período del año anterior ({nom_b_act} {anio_actual-1}), "
@@ -156,13 +161,8 @@ def generar_analisis_y_aspectos(v_act, v_p2, v_p3, df_p1, df_p3, nom_b_act, nom_
         f"{texto_insumos}"
     )
 
-    col_cli = next((c for c in df_p1.columns if str(c).strip().upper() in ["CLIENTE", "NOMBRE_CLIENTE", "TERCERO", "RAZON_SOCIAL"]), None)
-    top_clis = df_p1.groupby(col_cli)[col_val].sum().sort_values(ascending=False).index.tolist() if col_cli and not df_p1.empty else []
-    cli_1 = str(top_clis[0]) if len(top_clis) > 0 else "clientes clave"
-    cli_2 = str(top_clis[1]) if len(top_clis) > 1 else "segundo grupo de cuentas"
-
     aspectos = [
-        {"titulo": "Análisis de líneas e insumos con mayor variación", "descripcion": f"Impulsar estrategias para revertir caídas en productos afectados y mantener abastecimiento constante."},
+        {"titulo": "Análisis de líneas e insumos con mayor variación", "descripcion": "Impulsar estrategias para revertir caídas en productos afectados y mantener abastecimiento constante."},
         {"titulo": "Recuperación de negocios pendientes", "descripcion": f"Fortalecer seguimiento a clientes estratégicos como {cli_1} y {cli_2}."},
         {"titulo": "Disponibilidad de inventario", "descripcion": "Garantizar disponibilidad continua en insumos de alta rotación."},
         {"titulo": "Líneas de mayor rentabilidad", "descripcion": "Aumentar participación comercial de las líneas con mayor margen."},
@@ -341,7 +341,12 @@ def render_modulo_informe(df_global):
 
     with tab_gen:
         col_vendedor = next((c for c in df_global.columns if str(c).strip().upper() in ["VENDEDOR", "RESPONSABLE"]), "VENDEDOR")
-        col_cliente = next((c for c in df_global.columns if str(c).strip().upper() in ["CLIENTE", "NOMBRE_CLIENTE", "TERCERO", "RAZON_SOCIAL"]), None)
+        
+        # BÚSQUEDA ESPECÍFICA DE LA COLUMNA NOMBRE SN
+        col_cliente = next((c for c in df_global.columns if str(c).strip().upper() in ["NOMBRE SN", "NOMBRE_SN", "NOMBRE  SN"]), None)
+        if not col_cliente:
+            col_cliente = next((c for c in df_global.columns if str(c).strip().upper() in ["CLIENTE", "NOMBRE_CLIENTE", "TERCERO", "RAZON_SOCIAL"]), None)
+
         col_prov = next((c for c in df_global.columns if str(c).strip().upper() in ["FABRICANTE", "PROVEEDOR", "MARCA"]), None)
 
         st.subheader("Configuración del Informe")
@@ -368,7 +373,7 @@ def render_modulo_informe(df_global):
             if col_vendedor in df_base_neteada.columns and vendedor_sel != "Todos":
                 df_base_neteada = df_base_neteada[df_base_neteada[col_vendedor] == vendedor_sel]
 
-            # 3. EXTRAER LOS 3 DATAFRAMES EXACTOS (SIN FILTRAR NI ELIMINAR FILAS AÚN)
+            # 3. EXTRAER LOS 3 DATAFRAMES EXACTOS
             anio_act = int(anio_sel)
             anio_prev_ano = int(anio_sel - 1)
             anio_p3 = int(anio_sel if bim_sel != "B1" else (anio_sel - 1))
@@ -403,7 +408,7 @@ def render_modulo_informe(df_global):
                     
                     tabla_clis = sorted(tabla_clis, key=lambda x: x["v_act_num"], reverse=True)
 
-                # CÁLCULO DE TOTALES DE CLIENTES SOBRE LA BASE TOTAL REAL
+                # TOTALES REALES DE LA BASE COMPLETA
                 tot_cli_act = float(df_p1[col_val].sum()) if not df_p1.empty else 0.0
                 tot_cli_p2 = float(df_p2[col_val].sum()) if not df_p2.empty else 0.0
                 tot_cli_p3 = float(df_p3[col_val].sum()) if not df_p3.empty else 0.0
@@ -435,7 +440,6 @@ def render_modulo_informe(df_global):
                         vp3 = float(df_p3[df_p3[col_prov].astype(str).str.strip().str.upper() == fab][col_val].sum()) if not df_p3.empty else 0.0
                         tabla_provs.append({"PROVEEDOR": fab, "v_act_num": va, "v_p2_num": vp2, "v_p3_num": vp3})
 
-                    # Fila "Otros" para mantener integridad de totales
                     sum_fab_act = sum(x["v_act_num"] for x in tabla_provs)
                     sum_fab_p2 = sum(x["v_p2_num"] for x in tabla_provs)
                     sum_fab_p3 = sum(x["v_p3_num"] for x in tabla_provs)
@@ -487,7 +491,7 @@ def render_modulo_informe(df_global):
             buf_grafica = generar_grafica_comparativa_fabricantes([head_b_act, head_b_ant_anio, head_b_prev], [tot_fab_act, tot_fab_p2, tot_fab_p3])
             
             txt_analisis, aspectos_lista, txt_cierre = generar_analisis_y_aspectos(
-                tot_fab_act, tot_fab_p2, tot_fab_p3, df_p1, df_p3, nom_b_act, nom_b_prev, anio_sel, col_val
+                tot_fab_act, tot_fab_p2, tot_fab_p3, df_p1, df_p3, nom_b_act, nom_b_prev, anio_sel, col_val, col_cliente
             )
 
             path_template = "templates/BIMENSUAL MAY-JUN.docx"
@@ -515,7 +519,7 @@ def render_modulo_informe(df_global):
                 doc.save(output_buf)
                 output_buf.seek(0)
 
-                st.success("✅ Informe generado exitosamente con la suma correcta de todos los períodos.")
+                st.success("✅ Informe generado exitosamente con todas las reglas aplicadas.")
                 st.download_button(
                     label="📥 Descargar Informe Word (.docx)",
                     data=output_buf,
