@@ -113,7 +113,7 @@ def generar_grafica_barras_tres_periodos(v_p1, v_p2, v_p3, lbl_p1, lbl_p2, lbl_p
     buf.seek(0)
     return buf
 
-def generar_analisis_y_aspectos(tot_p1, tot_p2, tot_p3, lbl_p1, lbl_p2, lbl_p3, df_p1, col_vendedor, col_cliente, vendedor_sel):
+def generar_analisis_y_aspectos(tot_p1, tot_p2, tot_p3, lbl_p1, lbl_p2, lbl_p3, df_p1, col_vendedor, col_cliente, col_val, vendedor_sel):
     var_p2 = calcular_variacion_pct(tot_p1, tot_p2)
     var_p3 = calcular_variacion_pct(tot_p1, tot_p3)
 
@@ -132,9 +132,8 @@ def generar_analisis_y_aspectos(tot_p1, tot_p2, tot_p3, lbl_p1, lbl_p2, lbl_p3, 
         txt_p3 = f"un comportamiento de {var_p3:.1f}% en comparación con el bimestre inmediatamente anterior ({lbl_p3}: {num_p3})"
 
     top_clis = []
-    if not df_p1.empty and col_cliente in df_p1.columns:
-        # Respeta el orden natural sin sorted()
-        grp = df_p1.groupby(col_cliente, sort=False)["TOTAL LINEA"].sum().reset_index()
+    if not df_p1.empty and col_cliente in df_p1.columns and col_val in df_p1.columns:
+        grp = df_p1.groupby(col_cliente, sort=False)[col_val].sum().reset_index()
         top_clis = grp.head(2)[col_cliente].tolist()
 
     txt_clis = f", impulsado principalmente por cuentas clave como { ' y '.join(top_clis) }" if top_clis else ""
@@ -174,10 +173,7 @@ def aplicar_formato_celda_total(row_cells):
         cell._tc.get_or_add_tcPr().append(shading)
 
 def rellenar_o_crear_tabla(doc, index_tabla, headers, rows_data):
-    """
-    Inserta o reescribe los datos en la tabla existente de la plantilla sin borrar
-    la estructura de la plantilla ni cambiar el formato de los datos.
-    """
+    """Inserta o reescribe los datos en la tabla existente de la plantilla respetando su estructura."""
     if len(doc.tables) > index_tabla:
         table = doc.tables[index_tabla]
         
@@ -276,28 +272,37 @@ def construir_documento_word_respetando_plantilla(contexto, path_template=None):
 
     return doc
 
-def render_modulo_informe():
-    """Función principal que renderiza la vista en Streamlit."""
+def render_modulo_informe(df_global=None, *args, **kwargs):
+    """Función principal del módulo que acepta df_global recibido desde app.py."""
     st.title("📊 Generador de Informe Bimensual Comercial")
 
-    st.sidebar.header("1. Carga de Archivos")
-    file_base = st.sidebar.file_uploader("Base de Ventas Principal (Excel/CSV)", type=["xlsx", "xls", "csv"])
+    df_base = None
+
+    # Verifica si la base viene transmitida desde app.py
+    if df_global is not None and isinstance(df_global, pd.DataFrame) and not df_global.empty:
+        df_base = df_global
+        st.sidebar.success("Base de ventas recibida del sistema principal.")
+    else:
+        st.sidebar.header("1. Carga de Archivos")
+        file_base = st.sidebar.file_uploader("Base de Ventas Principal (Excel/CSV)", type=["xlsx", "xls", "csv"])
+        if file_base:
+            try:
+                if file_base.name.endswith(".csv"):
+                    df_base = pd.read_csv(file_base)
+                else:
+                    df_base = pd.read_excel(file_base)
+            except Exception as e:
+                st.error(f"Error al leer la base principal: {e}")
+                return
+
+    st.sidebar.header("Filtros / Listas Propias (Opciones)")
     file_provs = st.sidebar.file_uploader("Filtro Opcional: Lista Fabricantes (Excel/CSV)", type=["xlsx", "xls", "csv"])
     file_clis = st.sidebar.file_uploader("Filtro Opcional: Lista Clientes (Excel/CSV)", type=["xlsx", "xls", "csv"])
 
     path_template = "plantilla_informe.docx" if os.path.exists("plantilla_informe.docx") else None
 
-    if not file_base:
-        st.info("Por favor, suba el archivo de ventas principal para comenzar.")
-        return
-
-    try:
-        if file_base.name.endswith(".csv"):
-            df_base = pd.read_csv(file_base)
-        else:
-            df_base = pd.read_excel(file_base)
-    except Exception as e:
-        st.error(f"Error al leer la base principal: {e}")
+    if df_base is None or df_base.empty:
+        st.info("Por favor, suba o cargue el archivo de ventas principal para comenzar.")
         return
 
     col_vendedor, col_prov, col_cliente, col_anio, col_mes, col_val, col_tipo_doc = identificar_columnas_base(df_base)
@@ -310,7 +315,7 @@ def render_modulo_informe():
 
     st.sidebar.header("2. Parámetros del Informe")
     
-    # ORDEN NATURAL: Se remueve el "sorted()" para conservar el orden original del archivo
+    # ORDEN NATURAL: Conserva el orden en el que viene el archivo original
     vendedores = df_base_net[col_vendedor].dropna().drop_duplicates().astype(str).tolist()
     vendedor_sel = st.sidebar.selectbox("Seleccionar Vendedor:", vendedores)
 
@@ -360,7 +365,7 @@ def render_modulo_informe():
     col_b_ant = f"Ventas {info_bim['nombre'].split()[0]} {anio_prev_ano}"
     col_b_prev = f"Ventas {info_bim['previo']} {anio_p3}"
 
-    # ORDEN NATURAL FABRICANTES: Conserva el orden en el que vienen los datos (archivo de filtro o archivo base)
+    # ORDEN NATURAL FABRICANTES: Mantiene exactamente la secuencia en que están registrados
     provs = lista_prov_custom if lista_prov_custom else df_vend[col_prov].dropna().drop_duplicates().tolist()
     tabla_proveedores = []
     for pr in provs:
@@ -381,7 +386,7 @@ def render_modulo_informe():
         "v_p3": formatear_moneda(tot_p3)
     })
 
-    # ORDEN NATURAL CLIENTES: Conserva el orden en el que vienen los datos (archivo de filtro o archivo base)
+    # ORDEN NATURAL CLIENTES: Mantiene exactamente la secuencia en que están registrados
     clis = lista_cli_custom if lista_cli_custom else df_vend[col_cliente].dropna().drop_duplicates().tolist()
     tabla_clientes = []
     for cl in clis:
@@ -406,7 +411,7 @@ def render_modulo_informe():
     grafica_buf = generar_grafica_barras_tres_periodos(tot_p1, tot_p2, tot_p3, lbl_p1, lbl_p2, lbl_p3, titulo_grafica)
 
     analisis_txt, aspectos, cierre_txt = generar_analisis_y_aspectos(
-        tot_p1, tot_p2, tot_p3, lbl_p1, lbl_p2, lbl_p3, df_p1, col_vendedor, col_cliente, vendedor_sel
+        tot_p1, tot_p2, tot_p3, lbl_p1, lbl_p2, lbl_p3, df_p1, col_vendedor, col_cliente, col_val, vendedor_sel
     )
 
     contexto = {
@@ -446,6 +451,5 @@ def render_modulo_informe():
         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     )
 
-# Para uso directo, si se ejecutara solo este archivo (opcional, no afectará a app.py)
 if __name__ == "__main__":
     render_modulo_informe()
