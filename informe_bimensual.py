@@ -384,10 +384,10 @@ def render_modulo_informe(df_global=None, *args, **kwargs):
             nom_b_act = cfg_b["nombre"]
             nom_b_prev = MAPA_BIMESTRES[cfg_b["previo"]]["nombre"]
 
-            # --- FILTRADO DE CADA PERÍODO ---
+            # --- FILTRADO DE CADA PERÍODO (INCLUYENDO FACTURAS Y NOTAS CRÉDITO) ---
             df_p1_base = df_base[(df_base["AÑO"] == anio_sel) & (df_base["MES"].isin(cfg_b["meses"]))]
             if col_tipo_doc:
-                df_p1_base = df_p1_base[df_p1_base[col_tipo_doc].astype(str).str.upper().str.contains("FACTURA", na=False)]
+                df_p1_base = df_p1_base[df_p1_base[col_tipo_doc].astype(str).str.upper().str.contains("FACTURA|NOTA", na=False)]
 
             df_p2_base = df_base[(df_base["AÑO"] == (anio_sel - 1)) & (df_base["MES"].isin(cfg_b["meses"]))]
             if col_tipo_doc:
@@ -398,7 +398,7 @@ def render_modulo_informe(df_global=None, *args, **kwargs):
             if col_tipo_doc:
                 df_p3_base = df_p3_base[df_p3_base[col_tipo_doc].astype(str).str.upper().str.contains("FACTURA|NOTA", na=False)]
 
-            # --- OBTENER LISTA DE CLIENTES CARGADOS (CONSERVA SU ORDEN EXACTO) ---
+            # --- OBTENER LISTA DE CLIENTES CARGADOS ---
             lista_cli_custom = []
             if 'df_clientes_custom' in st.session_state and not st.session_state['df_clientes_custom'].empty:
                 df_cc = st.session_state['df_clientes_custom']
@@ -412,7 +412,7 @@ def render_modulo_informe(df_global=None, *args, **kwargs):
             else:
                 df_p1, df_p2, df_p3 = df_p1_base, df_p2_base, df_p3_base
 
-            # --- 1. TABLA DE CLIENTES (Mantiene orden original del archivo/lista) ---
+            # --- 1. TABLA DE CLIENTES (Ordenada de mayor a menor según el período actual) ---
             tabla_clis = []
             if col_cliente and col_cliente in df_base.columns:
                 if lista_cli_custom:
@@ -429,6 +429,9 @@ def render_modulo_informe(df_global=None, *args, **kwargs):
                         vp2 = float(df_p2[df_p2[col_cliente] == c][col_val].sum()) if not df_p2.empty else 0.0
                         vp3 = float(df_p3[df_p3[col_cliente] == c][col_val].sum()) if not df_p3.empty else 0.0
                         tabla_clis.append({"CLIENTE": str(c), "v_act_num": va, "v_p2_num": vp2, "v_p3_num": vp3})
+
+                # Ordenar clientes de mayor a menor venta en el período actual
+                tabla_clis.sort(key=lambda x: x["v_act_num"], reverse=True)
 
                 tot_cli_act = sum(x["v_act_num"] for x in tabla_clis)
                 tot_cli_p2 = sum(x["v_p2_num"] for x in tabla_clis)
@@ -448,7 +451,7 @@ def render_modulo_informe(df_global=None, *args, **kwargs):
             else:
                 tot_cli_act, tot_cli_p2, tot_cli_p3 = 0.0, 0.0, 0.0
 
-            # --- 2. TABLA DE FABRICANTES (Mantiene orden original del archivo/lista) ---
+            # --- 2. TABLA DE FABRICANTES (Ordenada de mayor a menor según el período actual) ---
             tabla_provs = []
             if col_prov and col_prov in df_base.columns:
                 lista_fab_custom = []
@@ -472,6 +475,9 @@ def render_modulo_informe(df_global=None, *args, **kwargs):
 
                         tabla_provs.append({"PROVEEDOR": fab, "v_act_num": va, "v_p2_num": vp2, "v_p3_num": vp3})
 
+                    # Ordenar fabricantes de la lista de mayor a menor por período actual
+                    tabla_provs.sort(key=lambda x: x["v_act_num"], reverse=True)
+
                     for p in todos_provs:
                         if p.upper() not in lista_fab_custom:
                             otros_v_act += float(df_p1[df_p1[col_prov].astype(str).str.strip() == p][col_val].sum()) if not df_p1.empty else 0.0
@@ -486,6 +492,9 @@ def render_modulo_informe(df_global=None, *args, **kwargs):
                         vp2 = float(df_p2[df_p2[col_prov] == p][col_val].sum()) if not df_p2.empty else 0.0
                         vp3 = float(df_p3[df_p3[col_prov] == p][col_val].sum()) if not df_p3.empty else 0.0
                         tabla_provs.append({"PROVEEDOR": str(p), "v_act_num": va, "v_p2_num": vp2, "v_p3_num": vp3})
+
+                    # Ordenar fabricantes de mayor a menor por período actual
+                    tabla_provs.sort(key=lambda x: x["v_act_num"], reverse=True)
 
                 tot_fab_act = sum(x["v_act_num"] for x in tabla_provs)
                 tot_fab_p2 = sum(x["v_p2_num"] for x in tabla_provs)
