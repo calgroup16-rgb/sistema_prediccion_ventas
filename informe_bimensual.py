@@ -133,7 +133,7 @@ def generar_analisis_y_aspectos(tot_p1, tot_p2, tot_p3, lbl_p1, lbl_p2, lbl_p3, 
 
     top_clis = []
     if not df_p1.empty and col_cliente in df_p1.columns:
-        # Aquí también se remueve el sort automático para respetar el orden natural
+        # Respeta el orden natural sin sorted()
         grp = df_p1.groupby(col_cliente, sort=False)["TOTAL LINEA"].sum().reset_index()
         top_clis = grp.head(2)[col_cliente].tolist()
 
@@ -276,8 +276,8 @@ def construir_documento_word_respetando_plantilla(contexto, path_template=None):
 
     return doc
 
-def main():
-    st.set_page_config(page_title="Generador de Informe Bimensual", layout="wide")
+def render_modulo_informe():
+    """Función principal que renderiza la vista en Streamlit."""
     st.title("📊 Generador de Informe Bimensual Comercial")
 
     st.sidebar.header("1. Carga de Archivos")
@@ -446,5 +446,6 @@ def main():
         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     )
 
+# Para uso directo, si se ejecutara solo este archivo (opcional, no afectará a app.py)
 if __name__ == "__main__":
-    main()
+    render_modulo_informe()
